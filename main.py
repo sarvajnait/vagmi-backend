@@ -72,10 +72,32 @@ Answer:
 """
 
 
-class MiniLMEmbeddings(Embeddings):
+# Lazy embedding loader
+class LazyMiniLMEmbeddings(Embeddings):
     def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2"):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
+        self.model_name = model_name
+        self._tokenizer = None
+        self._model = None
+
+    def _load(self):
+        if self._tokenizer is None or self._model is None:
+            from transformers import AutoTokenizer, AutoModel
+            import torch
+
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self._model = AutoModel.from_pretrained(self.model_name)
+            self._model.eval()  # disable dropout
+
+        return self._tokenizer, self._model
+
+    def _embed(self, text: str):
+        tokenizer, model = self._load()
+        tokens = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+        with torch.no_grad():
+            model_out = model(**tokens)
+            # mean pooling (same as sentence-transformers default)
+            embeddings = model_out.last_hidden_state.mean(dim=1).squeeze().numpy()
+        return embeddings
 
     def embed_documents(self, texts):
         return [self._embed(t) for t in texts]
@@ -83,20 +105,9 @@ class MiniLMEmbeddings(Embeddings):
     def embed_query(self, text):
         return self._embed(text)
 
-    def _embed(self, text):
-        tokens = self.tokenizer(
-            text, return_tensors="pt", truncation=True, padding=True
-        )
-        with torch.no_grad():
-            model_out = self.model(**tokens)
-            # Use mean pooling (same as sentence-transformers default)
-            embeddings = model_out.last_hidden_state.mean(dim=1).squeeze().numpy()
-        return embeddings
 
-
-# Initialize embedding model (shared across all grades)
-embedding_model = MiniLMEmbeddings()
-
+# Initialize embedding model (lazy-loaded, shared across grades)
+embedding_model = LazyMiniLMEmbeddings()
 # Dictionary to store vector stores for each grade
 vector_stores = {}
 memories = {}
