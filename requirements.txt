@@ -1,0 +1,32 @@
+# Core dependencies
+fastapi
+uvicorn
+gunicorn
+python-multipart
+websockets
+loguru
+python-dotenv
+
+# LangChain dependencies
+langchain
+langchain-community
+langchain-core
+langchain-text-splitters
+langchain-huggingface
+langchain_chroma
+
+# PDF processing
+PyPDF2
+pypdf
+
+# Vector database
+chromadb
+
+# Google Gemini API
+langchain-google-genai
+google-generativeai
+
+# Utilities
+aiohttp
+pydantic
+asyncio
