@@ -11,13 +11,10 @@ from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 import uvicorn
 from loguru import logger
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
-import google.generativeai as genai
 from dotenv import load_dotenv
-from typing import Any, Dict, List
 from pydantic import BaseModel
-from transformers import AutoTokenizer, AutoModel
 import torch
 from langchain.embeddings.base import Embeddings
 
@@ -71,43 +68,6 @@ Question: {question}
 Answer:
 """
 
-
-# Lazy embedding loader
-class LazyMiniLMEmbeddings(Embeddings):
-    def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2"):
-        self.model_name = model_name
-        self._tokenizer = None
-        self._model = None
-
-    def _load(self):
-        if self._tokenizer is None or self._model is None:
-            from transformers import AutoTokenizer, AutoModel
-            import torch
-
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self._model = AutoModel.from_pretrained(self.model_name)
-            self._model.eval()  # disable dropout
-
-        return self._tokenizer, self._model
-
-    def _embed(self, text: str):
-        tokenizer, model = self._load()
-        tokens = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-        with torch.no_grad():
-            model_out = model(**tokens)
-            # mean pooling (same as sentence-transformers default)
-            embeddings = model_out.last_hidden_state.mean(dim=1).squeeze().numpy()
-        return embeddings
-
-    def embed_documents(self, texts):
-        return [self._embed(t) for t in texts]
-
-    def embed_query(self, text):
-        return self._embed(text)
-
-
-# Initialize embedding model (lazy-loaded, shared across grades)
-embedding_model = LazyMiniLMEmbeddings()
 # Dictionary to store vector stores for each grade
 vector_stores = {}
 memories = {}
@@ -116,7 +76,7 @@ memories = {}
 for grade in range(1, 8):
     vector_stores[grade] = Chroma(
         persist_directory=f"vectorstore_db/grade_{grade}",
-        embedding_function=embedding_model,
+        embedding_function=GoogleGenerativeAIEmbeddings(model="models/embedding-001"),
         collection_name=f"grade_{grade}_collection",
     )
     memories[grade] = ConversationBufferMemory(

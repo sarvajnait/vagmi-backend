@@ -12,8 +12,6 @@ langchain
 langchain-community
 langchain-core
 langchain-text-splitters
-transformers
-torch==2.5.0
 
 # PDF processing
 PyPDF2
