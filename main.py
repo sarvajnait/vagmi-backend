@@ -15,8 +15,6 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 from pydantic import BaseModel
-import torch
-from langchain.embeddings.base import Embeddings
 
 # Load environment variables from .env file
 load_dotenv()
