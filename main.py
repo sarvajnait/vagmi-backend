@@ -17,6 +17,9 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from typing import Any, Dict, List
 from pydantic import BaseModel
+from transformers import AutoTokenizer, AutoModel
+import torch
+from langchain.embeddings.base import Embeddings
 
 # Load environment variables from .env file
 load_dotenv()
@@ -68,10 +71,31 @@ Question: {question}
 Answer:
 """
 
+
+class MiniLMEmbeddings(Embeddings):
+    def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2"):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name)
+
+    def embed_documents(self, texts):
+        return [self._embed(t) for t in texts]
+
+    def embed_query(self, text):
+        return self._embed(text)
+
+    def _embed(self, text):
+        tokens = self.tokenizer(
+            text, return_tensors="pt", truncation=True, padding=True
+        )
+        with torch.no_grad():
+            model_out = self.model(**tokens)
+            # Use mean pooling (same as sentence-transformers default)
+            embeddings = model_out.last_hidden_state.mean(dim=1).squeeze().numpy()
+        return embeddings
+
+
 # Initialize embedding model (shared across all grades)
-embedding_model = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
+embedding_model = MiniLMEmbeddings()
 
 # Dictionary to store vector stores for each grade
 vector_stores = {}
