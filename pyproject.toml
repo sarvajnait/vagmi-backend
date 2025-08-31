@@ -1,0 +1,27 @@
+[project]
+name = "vagmi-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.12.15",
+    "asyncio>=4.0.0",
+    "chromadb>=1.0.20",
+    "fastapi>=0.116.1",
+    "google-generativeai>=0.8.5",
+    "gunicorn>=23.0.0",
+    "langchain>=0.3.27",
+    "langchain-community>=0.3.29",
+    "langchain-core>=0.3.75",
+    "langchain-google-genai>=2.0.10",
+    "langchain-text-splitters>=0.3.10",
+    "langgraph>=0.6.6",
+    "loguru>=0.7.3",
+    "pydantic>=2.11.7",
+    "pypdf>=6.0.0",
+    "pypdf2>=3.0.1",
+    "python-dotenv>=1.1.1",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.35.0",
+]
