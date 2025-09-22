@@ -1,30 +1,25 @@
-# Core dependencies
-fastapi
-uvicorn
-gunicorn
-python-multipart
-loguru
-python-dotenv
-
-# LangChain dependencies
-langchain
-langchain-community
-langchain-core
-langchain-text-splitters
-langgraph
-
-# PDF processing
-PyPDF2
-pypdf
-
-# Vector database
-chromadb
-
-# Google Gemini API
-langchain-google-genai
-google-generativeai
-
-# Utilities
-aiohttp 
-pydantic
-asyncio
+aiohttp>=3.12.15
+alembic>=1.16.5
+asyncio>=4.0.0
+chromadb>=1.0.20
+fastapi>=0.116.1
+google-generativeai>=0.8.5
+gunicorn>=23.0.0
+langchain>=0.3.27
+langchain-community>=0.3.29
+langchain-core>=0.3.75
+langchain-google-genai>=2.0.10
+langchain-postgres>=0.0.15
+langchain-text-splitters>=0.3.10
+langgraph>=0.6.6
+loguru>=0.7.3
+psycopg2>=2.9.10
+psycopg2-binary>=2.9.10
+pydantic>=2.11.7
+pypdf>=6.0.0
+pypdf2>=3.0.1
+python-dotenv>=1.1.1
+python-multipart>=0.0.20
+sqlalchemy>=2.0.43
+sqlmodel>=0.0.24
+uvicorn>=0.35.0
