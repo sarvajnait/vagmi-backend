@@ -23,6 +23,8 @@ from app.utils.sanitization import (
 )
 from app.core.config import settings
 from app.core.limiter import limiter
+import requests
+import urllib
 
 router = APIRouter()
 security = HTTPBearer()
@@ -60,7 +62,9 @@ async def get_current_user(
 async def register_user(
     request: Request, user_data: UserCreate, session: Session = Depends(get_session)
 ):
+    print(user_data )
     phone = sanitize_phone(user_data.phone)
+    name = user_data.name
     password = user_data.password
     board = user_data.board
     medium = user_data.medium
@@ -74,6 +78,7 @@ async def register_user(
 
     user = User(
         phone=phone,
+        name=name,
         hashed_password=User.hash_password(password),
         board_id=board,
         medium_id=medium,
@@ -90,6 +95,7 @@ async def register_user(
         user=UserResponse(
             id=user.id,
             phone=user.phone,
+            name=name,
             board_id=board,
             medium_id=medium,
             class_level_id=grade,
@@ -129,6 +135,7 @@ async def login(
         user=UserResponse(
             id=user.id,
             phone=user.phone,
+            name=user.name,
             board_id=user.board_id,
             medium_id=user.medium_id,
             class_level_id=user.class_level_id,
@@ -170,7 +177,14 @@ async def login_otp(
     refresh_token = create_refresh_token(str(user.id))
 
     return AuthResponse(
-        user=UserResponse(id=user.id, phone=user.phone),
+        user=UserResponse(
+            id=user.id,
+            phone=user.phone,
+            name=user.name,
+            board_id=user.board_id,
+            medium_id=user.medium_id,
+            class_level_id=user.class_level_id,
+        ),
         tokens=TokenPair(
             access_token=access_token.access_token,
             refresh_token=refresh_token.access_token,
@@ -235,9 +249,8 @@ def send_sms(phone: str, message: str):
         "message": message,
         "sender": settings.TEXTLOCAL_SENDER,
     }
-    # Actual sending logic commented out
-    # encoded_payload = urllib.parse.urlencode(payload)
-    # requests.post("https://api.textlocal.in/send/", data=encoded_payload)
+
+    requests.post("https://api.textlocal.in/send/", data=payload)
     return True
 
 
@@ -252,7 +265,6 @@ async def check_user_exists(
 ):
     phone = sanitize_phone(phone)
     user = session.exec(select(User).where(User.phone == phone)).first()
-
     if user:
         return {
             "status": "success",
@@ -262,7 +274,9 @@ async def check_user_exists(
 
     otp, secret = generate_otp()
     print(otp)
-    send_sms(phone, f"{otp} is your OTP. {app_signature}")
+    sms_text = f"{otp} is the OTP to verify your mobile number for Cherri Learn. This OTP is valid for 5 minutes. pls do not share it with anyone.\n {app_signature}"
+
+    send_sms(phone, sms_text)
     return {
         "status": "success",
         "message": "OTP sent",

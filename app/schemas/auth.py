@@ -1,10 +1,8 @@
 """This file contains the authentication schema for the application."""
 
-import re
 from datetime import datetime
 
-from pydantic import BaseModel, SecretStr, Field
-from pydantic_core import PydanticCustomError
+from pydantic import BaseModel, Field
 
 
 class Token(BaseModel):
@@ -45,6 +43,7 @@ class UserCreate(BaseModel):
     """Request model for user registration using phone."""
 
     phone: str = Field(..., description="User's phone number")
+    name: str = Field(default=None)  # Added name
     password: str = Field(..., description="User's password")
     board: int = Field(..., description="Selected board ID")
     medium: int = Field(..., description="Selected medium ID")
@@ -54,6 +53,7 @@ class UserCreate(BaseModel):
 class UserResponse(BaseModel):
     id: int
     phone: str = Field(..., description="User's phone number")
+    name: str = Field(default=None) 
     board_id: int
     medium_id: int
     class_level_id: int

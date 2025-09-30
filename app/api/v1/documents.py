@@ -15,7 +15,7 @@ platform = EducationPlatform()
 COLLECTION_NAME = "education_documents"
 
 
-def upload_document(self, file_path: str, metadata: Dict[str, str]) -> int:
+def process_document_upload(file_path: str, metadata: Dict[str, str]) -> int:
     """Upload document with hierarchical metadata"""
     try:
         loader = PyPDFLoader(file_path)
@@ -79,7 +79,7 @@ async def upload_document(
             "chapter": chapter,
         }
 
-        doc_count = upload_document(file_path, metadata)
+        doc_count = process_document_upload(file_path, metadata)
 
         return {
             "message": "Document uploaded successfully",
@@ -92,9 +92,7 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-router.get("/", response_model=Dict[str, List[DocumentResponse]])
-
-
+@router.get("/", response_model=Dict[str, List[DocumentResponse]])
 async def get_documents(
     class_level: Optional[str] = Query(None),
     board: Optional[str] = Query(None),
@@ -162,9 +160,7 @@ async def get_documents(
         return {"data": []}
 
 
-router.delete("/")
-
-
+@router.delete("/")
 async def delete_document(
     delete_request: DeleteRequest, session: Session = Depends(get_session)
 ):
