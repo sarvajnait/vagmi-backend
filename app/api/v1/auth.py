@@ -19,7 +19,6 @@ from app.utils.auth import (
 from app.utils.sanitization import (
     sanitize_phone,
     sanitize_string,
-    validate_password_strength,
 )
 from app.core.config import settings
 from app.core.limiter import limiter
@@ -69,8 +68,6 @@ async def register_user(
     board = user_data.board
     medium = user_data.medium
     grade = user_data.grade
-
-    validate_password_strength(password)
 
     existing_user = session.exec(select(User).where(User.phone == phone)).first()
     if existing_user:
