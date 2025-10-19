@@ -6,7 +6,7 @@ from app.models import LLMTextbook, AdditionalNotes
 from app.services.database import get_session
 from app.core.langgraph.graph import EducationPlatform
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.utils.files import upload_to_do, delete_from_do
 
 router = APIRouter()
