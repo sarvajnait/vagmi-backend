@@ -182,13 +182,8 @@ async def check_user_exists(
             "data": {"exists": True},
         }
 
-    otp, secret = generate_otp()
-    print(otp)
-    sms_text = f"{otp} is the OTP to verify your mobile number for Cherri Learn. This OTP is valid for 5 minutes. pls do not share it with anyone.\n {app_signature}"
-
-    send_sms(phone, sms_text)
     return {
         "status": "success",
-        "message": "OTP sent",
-        "data": {"exists": False, "otp_secret": secret},
+        "message": "Admin does not exist",
+        "data": {"exists": False},
     }
