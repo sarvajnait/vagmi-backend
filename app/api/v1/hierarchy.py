@@ -14,16 +14,18 @@ platform = EducationPlatform()
 
 def fetch_hierarchy_options(
     filter_params: HierarchyFilter, session: Session
-) -> Dict[str, List[str]]:
+) -> Dict[str, List[Dict]]:
+    """Fetch hierarchy options returning objects with id and name"""
     try:
         result = {
-            "class_level": [],
-            "board": [],
-            "medium": [],
-            "subject": [],
-            "chapter": [],
+            "class_levels": [],
+            "boards": [],
+            "mediums": [],
+            "subjects": [],
+            "chapters": [],
         }
 
+        # Get all class levels
         class_levels = session.exec(
             select(ClassLevel).order_by(
                 text(
@@ -31,87 +33,81 @@ def fetch_hierarchy_options(
                 )
             )
         ).all()
-        result["class_level"] = [cl.name for cl in class_levels]
+        result["class_levels"] = [{"id": cl.id, "name": cl.name} for cl in class_levels]
 
-        if filter_params.class_level:
+        # Get boards filtered by class_level_id
+        if filter_params.class_level_id:
             boards = session.exec(
                 select(Board)
-                .join(ClassLevel)
-                .where(ClassLevel.name == filter_params.class_level)
+                .where(Board.class_level_id == filter_params.class_level_id)
                 .order_by(Board.name)
             ).all()
-            result["board"] = [b.name for b in boards]
+            result["boards"] = [
+                {"id": b.id, "name": b.name, "class_level_id": b.class_level_id}
+                for b in boards
+            ]
 
-        if filter_params.board and filter_params.class_level:
+        # Get mediums filtered by board_id
+        if filter_params.board_id:
             mediums = session.exec(
                 select(Medium)
-                .join(Board)
-                .join(ClassLevel)
-                .where(
-                    ClassLevel.name == filter_params.class_level,
-                    Board.name == filter_params.board,
-                )
+                .where(Medium.board_id == filter_params.board_id)
                 .order_by(Medium.name)
             ).all()
-            result["medium"] = [m.name for m in mediums]
+            result["mediums"] = [
+                {"id": m.id, "name": m.name, "board_id": m.board_id} for m in mediums
+            ]
 
-        if filter_params.medium and filter_params.board and filter_params.class_level:
+        # Get subjects filtered by medium_id
+        if filter_params.medium_id:
             subjects = session.exec(
                 select(Subject)
-                .join(Medium)
-                .join(Board)
-                .join(ClassLevel)
-                .where(
-                    ClassLevel.name == filter_params.class_level,
-                    Board.name == filter_params.board,
-                    Medium.name == filter_params.medium,
-                )
+                .where(Subject.medium_id == filter_params.medium_id)
                 .order_by(Subject.name)
             ).all()
-            result["subject"] = [s.name for s in subjects]
+            result["subjects"] = [
+                {"id": s.id, "name": s.name, "medium_id": s.medium_id} for s in subjects
+            ]
 
-        if (
-            filter_params.subject
-            and filter_params.medium
-            and filter_params.board
-            and filter_params.class_level
-        ):
+        # Get chapters filtered by subject_id
+        if filter_params.subject_id:
             chapters = session.exec(
                 select(Chapter)
-                .join(Subject)
-                .join(Medium)
-                .join(Board)
-                .join(ClassLevel)
-                .where(
-                    ClassLevel.name == filter_params.class_level,
-                    Board.name == filter_params.board,
-                    Medium.name == filter_params.medium,
-                    Subject.name == filter_params.subject,
-                )
-                .order_by(Chapter.name)
+                .where(Chapter.subject_id == filter_params.subject_id)
+                .order_by(Chapter.chapter_number, Chapter.name)
             ).all()
-            result["chapter"] = [ch.name for ch in chapters]
+            result["chapters"] = [
+                {"id": ch.id, "name": ch.name, "subject_id": ch.subject_id}
+                for ch in chapters
+            ]
 
         return result
 
     except Exception as e:
         logger.error(f"Error getting hierarchy options: {e}")
         return {
-            level: []
-            for level in ["class_level", "board", "medium", "subject", "chapter"]
+            "class_levels": [],
+            "boards": [],
+            "mediums": [],
+            "subjects": [],
+            "chapters": [],
         }
 
 
 @router.get("/")
 async def get_hierarchy_options(
-    class_level: Optional[str] = Query(None),
-    board: Optional[str] = Query(None),
-    medium: Optional[str] = Query(None),
-    subject: Optional[str] = Query(None),
+    class_level_id: Optional[int] = Query(None),
+    board_id: Optional[int] = Query(None),
+    medium_id: Optional[int] = Query(None),
+    subject_id: Optional[int] = Query(None),
     session: Session = Depends(get_session),
 ):
+    """Get hierarchy options with IDs for document management"""
     filter_params = HierarchyFilter(
-        class_level=class_level, board=board, medium=medium, subject=subject
+        class_level_id=class_level_id,
+        board_id=board_id,
+        medium_id=medium_id,
+        subject_id=subject_id,
     )
     options = fetch_hierarchy_options(filter_params, session)
     return {"data": options}

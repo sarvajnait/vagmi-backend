@@ -3,8 +3,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlmodel import select, Session
 from loguru import logger
 from app.utils.otp import generate_otp, validate_otp, send_sms
-from app.models.user import User
-from app.schemas.auth import UserCreate, TokenPair, AuthResponse, UserResponse
+
+from app.models.admin import Admin
+from app.schemas.auth import (
+    AdminCreate,
+    TokenPair,
+    AuthResponse,
+    AdminResponse,
+    AdminAuthResponse,
+)
 from app.services.database import get_session
 from app.utils.auth import (
     create_access_token,
@@ -30,7 +37,7 @@ security = HTTPBearer()
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     session: Session = Depends(get_session),
-) -> User:
+) -> Admin:
     try:
         token = sanitize_string(credentials.credentials)
         user_id = verify_token(token)
@@ -39,7 +46,7 @@ async def get_current_user(
                 status_code=401, detail="Invalid authentication credentials"
             )
 
-        user = session.get(User, int(user_id))
+        user = session.get(Admin, int(user_id))
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         return user
@@ -51,30 +58,20 @@ async def get_current_user(
 # -----------------------
 # Register Endpoint
 # -----------------------
-@router.post("/register", response_model=AuthResponse)
+@router.post("/register", response_model=AdminAuthResponse)
 @limiter.limit(settings.RATE_LIMIT_ENDPOINTS["register"][0])
 async def register_user(
-    request: Request, user_data: UserCreate, session: Session = Depends(get_session)
+    request: Request, user_data: AdminCreate, session: Session = Depends(get_session)
 ):
-    print(user_data)
-    phone = sanitize_phone(user_data.phone)
-    name = user_data.name
-    password = user_data.password
-    board = user_data.board
-    medium = user_data.medium
-    grade = user_data.grade
 
-    existing_user = session.exec(select(User).where(User.phone == phone)).first()
+    phone = sanitize_phone(user_data.phone)
+
+    existing_user = session.exec(select(Admin).where(Admin.phone == phone)).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Phone already registered")
 
-    user = User(
+    user = Admin(
         phone=phone,
-        name=name,
-        hashed_password=User.hash_password(password),
-        board_id=board,
-        medium_id=medium,
-        class_level_id=grade,
     )
     session.add(user)
     session.commit()
@@ -83,54 +80,10 @@ async def register_user(
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
 
-    return AuthResponse(
-        user=UserResponse(
+    return AdminAuthResponse(
+        user=AdminResponse(
             id=user.id,
             phone=user.phone,
-            name=name,
-            board_id=board,
-            medium_id=medium,
-            class_level_id=grade,
-        ),
-        tokens=TokenPair(
-            access_token=access_token.access_token,
-            refresh_token=refresh_token.access_token,
-            token_type="bearer",
-            expires_at=access_token.expires_at,
-            refresh_expires_at=refresh_token.expires_at,
-        ),
-    )
-
-
-# -----------------------
-# Login Endpoint
-# -----------------------
-@router.post("/login", response_model=AuthResponse)
-@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["login"][0])
-async def login(
-    request: Request,
-    username: str = Body(..., embed=True),
-    password: str = Body(..., embed=True),
-    session: Session = Depends(get_session),
-):
-    username = sanitize_phone(username)
-    password = sanitize_string(password)
-
-    user = session.exec(select(User).where(User.phone == username)).first()
-    if not user or not user.verify_password(password):
-        raise HTTPException(status_code=401, detail="Incorrect phone or password")
-
-    access_token = create_access_token(str(user.id))
-    refresh_token = create_refresh_token(str(user.id))
-
-    return AuthResponse(
-        user=UserResponse(
-            id=user.id,
-            phone=user.phone,
-            name=user.name,
-            board_id=user.board_id,
-            medium_id=user.medium_id,
-            class_level_id=user.class_level_id,
         ),
         tokens=TokenPair(
             access_token=access_token.access_token,
@@ -145,7 +98,7 @@ async def login(
 # -----------------------
 # Login via OTP
 # -----------------------
-@router.post("/login-otp", response_model=AuthResponse)
+@router.post("/login-otp", response_model=AdminAuthResponse)
 @limiter.limit(settings.RATE_LIMIT_ENDPOINTS["login"][0])
 async def login_otp(
     request: Request,
@@ -161,21 +114,17 @@ async def login_otp(
     if not validate_otp(otp, otp_secret):
         raise HTTPException(status_code=401, detail="Invalid or expired OTP")
 
-    user = session.exec(select(User).where(User.phone == phone)).first()
+    user = session.exec(select(Admin).where(Admin.phone == phone)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
 
-    return AuthResponse(
-        user=UserResponse(
+    return AdminAuthResponse(
+        user=AdminResponse(
             id=user.id,
             phone=user.phone,
-            name=user.name,
-            board_id=user.board_id,
-            medium_id=user.medium_id,
-            class_level_id=user.class_level_id,
         ),
         tokens=TokenPair(
             access_token=access_token.access_token,
@@ -202,7 +151,7 @@ async def refresh_token(
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-    user = session.get(User, int(user_id))
+    user = session.get(Admin, int(user_id))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -218,9 +167,6 @@ async def refresh_token(
     )
 
 
-# -----------------------
-# Check User & Send OTP
-# -----------------------
 @router.post("/check-user")
 async def check_user_exists(
     phone: str = Body(..., embed=True),
@@ -228,11 +174,11 @@ async def check_user_exists(
     session: Session = Depends(get_session),
 ):
     phone = sanitize_phone(phone)
-    user = session.exec(select(User).where(User.phone == phone)).first()
+    user = session.exec(select(Admin).where(Admin.phone == phone)).first()
     if user:
         return {
             "status": "success",
-            "message": "User already exists",
+            "message": "Admin already exists",
             "data": {"exists": True},
         }
 
@@ -246,30 +192,3 @@ async def check_user_exists(
         "message": "OTP sent",
         "data": {"exists": False, "otp_secret": secret},
     }
-
-
-@router.post("/send-otp")
-async def send_otp(
-    phone: str = Body(..., embed=True),
-    app_signature: str = Body(default=""),
-):
-    phone = sanitize_phone(phone)
-    otp, secret = generate_otp()
-    print(otp)
-    sms_text = f"{otp} is the OTP to verify your mobile number for Cherri Learn. This OTP is valid for 5 minutes. pls do not share it with anyone.\n {app_signature}"
-    send_sms(phone, sms_text)
-    return {
-        "status": "success",
-        "message": "OTP sent",
-        "data": {"otp_secret": secret},
-    }
-
-
-@router.post("/verify-otp")
-async def verify_otp_endpoint(
-    otp: str = Body(..., embed=True),
-    otp_secret: str = Body(..., embed=True),
-):
-    if not validate_otp(otp, otp_secret):
-        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
-    return {"status": "success", "message": "OTP verified"}

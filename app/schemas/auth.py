@@ -53,12 +53,28 @@ class UserCreate(BaseModel):
 class UserResponse(BaseModel):
     id: int
     phone: str = Field(..., description="User's phone number")
-    name: str = Field(default=None) 
+    name: str = Field(default=None)
     board_id: int
     medium_id: int
     class_level_id: int
 
 
+class AdminCreate(BaseModel):
+    """Request model for admin registration using phone."""
+
+    phone: str = Field(..., description="User's phone number")
+
+
+class AdminResponse(BaseModel):
+    id: int
+    phone: str = Field(..., description="User's phone number")
+
+
 class AuthResponse(BaseModel):
     user: UserResponse
+    tokens: TokenPair
+
+
+class AdminAuthResponse(BaseModel):
+    user: AdminResponse
     tokens: TokenPair

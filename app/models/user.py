@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING, Optional
-from sqlmodel import Field, Relationship
+from sqlmodel import Field, Relationship, Column, Integer, ForeignKey
 from app.models.base import BaseModel
 import bcrypt
 
@@ -11,13 +11,23 @@ if TYPE_CHECKING:
 
 class User(BaseModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(default=None, index=True)  # Added name
+    name: str = Field(default=None, index=True)
     phone: str = Field(unique=True, index=True)
     hashed_password: str
 
-    class_level_id: Optional[int] = Field(foreign_key="class_levels.id")
-    board_id: Optional[int] = Field(foreign_key="boards.id")
-    medium_id: Optional[int] = Field(foreign_key="mediums.id")
+    # Option 1: Using sa_column with ForeignKey
+    class_level_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("class_levels.id", ondelete="SET NULL")),
+    )
+    board_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("boards.id", ondelete="SET NULL")),
+    )
+    medium_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("mediums.id", ondelete="SET NULL")),
+    )
 
     class_level: Optional["ClassLevel"] = Relationship()
     board: Optional["Board"] = Relationship()

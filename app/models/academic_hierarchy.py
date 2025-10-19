@@ -1,6 +1,8 @@
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.base import BaseModel
+from app.models.llm_resources import LLMTextbook, AdditionalNotes
+from app.models.student_content import StudentTextbook, StudentNotes
 
 
 # --------------------
@@ -115,6 +117,10 @@ class SubjectRead(SubjectBase):
 class ChapterBase(SQLModel):
     name: str
     subject_id: int = Field(foreign_key="subjects.id")
+    icon_url: Optional[str] = None
+    is_premium: bool = Field(default=False)
+    enabled: bool = Field(default=True)
+    chapter_number: int = Field(default=0, description="Used for ordering chapters")
 
 
 class Chapter(ChapterBase, BaseModel, table=True):
@@ -123,9 +129,31 @@ class Chapter(ChapterBase, BaseModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     subject: Subject = Relationship(back_populates="chapters")
 
+    llm_textbooks: List["LLMTextbook"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+    student_textbooks: List["StudentTextbook"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+    additional_notes: List["AdditionalNotes"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+    student_notes: List["StudentNotes"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+
 
 class ChapterCreate(ChapterBase):
     pass
+
+
+class ChapterUpdate(BaseModel):
+    name: Optional[str] = None
+    subject_id: Optional[int] = None
+    icon_url: Optional[str] = None
+    is_premium: Optional[bool] = None
+    enabled: Optional[bool] = None
+    chapter_number: Optional[int] = None
 
 
 class ChapterRead(ChapterBase):

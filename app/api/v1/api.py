@@ -3,7 +3,6 @@ from loguru import logger
 from app.core.config import settings
 
 from app.api.v1.agent import router as agent_router
-from app.api.v1.documents import router as documents_router
 from app.api.v1.transcribe import router as transcribe_router
 from app.api.v1.hierarchy import router as hierarchy_router
 from app.api.v1.class_levels import router as class_levels_router
@@ -13,6 +12,10 @@ from app.api.v1.subjects import router as subjects_router
 from app.api.v1.chapters import router as chapters_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.users import router as users_router
+from app.api.v1.admin.auth import router as admin_router
+from app.api.v1.files import router as files_router
+from app.api.v1.llm_resources import router as llm_resources_router
+from app.api.v1.student_content import router as student_content_router
 
 api_router = APIRouter()
 
@@ -20,7 +23,6 @@ api_router = APIRouter()
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(users_router, prefix="/users", tags=["users"])
 api_router.include_router(agent_router, prefix="/agent", tags=["agent"])
-api_router.include_router(documents_router, prefix="/documents", tags=["documents"])
 api_router.include_router(transcribe_router, prefix="/transcribe", tags=["transcribe"])
 api_router.include_router(
     hierarchy_router, prefix="/hierarchy-options", tags=["hierarchy"]
@@ -32,6 +34,14 @@ api_router.include_router(boards_router, prefix="/boards", tags=["boards"])
 api_router.include_router(mediums_router, prefix="/mediums", tags=["mediums"])
 api_router.include_router(subjects_router, prefix="/subjects", tags=["subjects"])
 api_router.include_router(chapters_router, prefix="/chapters", tags=["chapters"])
+api_router.include_router(files_router, prefix="/files", tags=["files"])
+api_router.include_router(
+    llm_resources_router, prefix="/llm_resources", tags=["llm_resources"]
+)
+api_router.include_router(
+    student_content_router, prefix="/student_content", tags=["student_content"]
+)
+api_router.include_router(admin_router, prefix="/admin/auth", tags=["admin"])
 
 
 @api_router.get("/health")

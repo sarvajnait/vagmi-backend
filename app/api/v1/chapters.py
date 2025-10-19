@@ -4,18 +4,56 @@ from typing import Dict, List, Optional
 from loguru import logger
 
 from app.models import Chapter, Subject
-from app.models import ChapterCreate, ChapterRead
+from app.models import ChapterCreate, ChapterRead, ChapterUpdate
 from app.services.database import get_session
 
 router = APIRouter()
 
+
+@router.get("/{chapter_id}", response_model=Dict[str, ChapterRead])
+async def get_chapter(chapter_id: int, session: Session = Depends(get_session)):
+    try:
+        # Fetch the chapter
+        db_chapter = session.get(Chapter, chapter_id)
+        if not db_chapter:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+
+        # Fetch the associated subject
+        subject = session.get(Subject, db_chapter.subject_id)
+        if not subject:
+            raise HTTPException(status_code=404, detail="Subject not found")
+
+        return {
+            "data": ChapterRead(
+                id=db_chapter.id,
+                name=db_chapter.name,
+                subject_id=db_chapter.subject_id,
+                subject_name=subject.name,
+                chapter_number=db_chapter.chapter_number,
+                enabled=db_chapter.enabled,
+                is_premium=db_chapter.is_premium,
+                icon_url=db_chapter.icon_url,
+            )
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching chapter {chapter_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/", response_model=Dict[str, List[ChapterRead]])
-async def get_chapters(subject_id: Optional[int] = Query(None), session: Session = Depends(get_session)):
+async def get_chapters(
+    subject_id: Optional[int] = Query(None), session: Session = Depends(get_session)
+):
     try:
         query = select(Chapter, Subject).join(Subject)
         if subject_id:
             query = query.where(Chapter.subject_id == subject_id)
-        results = session.exec(query.order_by(Subject.name, Chapter.name)).all()
+        results = session.exec(
+            query.order_by(Subject.name, Chapter.chapter_number)
+        ).all()
 
         chapters = [
             ChapterRead(
@@ -23,6 +61,10 @@ async def get_chapters(subject_id: Optional[int] = Query(None), session: Session
                 name=chapter.name,
                 subject_id=chapter.subject_id,
                 subject_name=subject.name,
+                chapter_number=chapter.chapter_number,
+                enabled=chapter.enabled,
+                is_premium=chapter.is_premium,
+                icon_url=chapter.icon_url,
             )
             for chapter, subject in results
         ]
@@ -31,18 +73,25 @@ async def get_chapters(subject_id: Optional[int] = Query(None), session: Session
         logger.error(f"Error getting chapters: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/", response_model=Dict[str, ChapterRead])
-async def create_chapter(chapter: ChapterCreate, session: Session = Depends(get_session)):
+async def create_chapter(
+    chapter: ChapterCreate, session: Session = Depends(get_session)
+):
     try:
         subject = session.get(Subject, chapter.subject_id)
         if not subject:
             raise HTTPException(status_code=400, detail="Subject not found")
 
         existing = session.exec(
-            select(Chapter).where(Chapter.name == chapter.name, Chapter.subject_id == chapter.subject_id)
+            select(Chapter).where(
+                Chapter.name == chapter.name, Chapter.subject_id == chapter.subject_id
+            )
         ).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Chapter already exists for this subject")
+            raise HTTPException(
+                status_code=400, detail="Chapter already exists for this subject"
+            )
 
         db_chapter = Chapter.model_validate(chapter)
         session.add(db_chapter)
@@ -54,6 +103,10 @@ async def create_chapter(chapter: ChapterCreate, session: Session = Depends(get_
                 name=db_chapter.name,
                 subject_id=db_chapter.subject_id,
                 subject_name=subject.name,
+                chapter_number=db_chapter.chapter_number,
+                enabled=db_chapter.enabled,
+                is_premium=db_chapter.is_premium,
+                icon_url=db_chapter.icon_url,
             )
         }
     except HTTPException:
@@ -62,6 +115,65 @@ async def create_chapter(chapter: ChapterCreate, session: Session = Depends(get_
         session.rollback()
         logger.error(f"Error creating chapter: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/{chapter_id}", response_model=Dict[str, ChapterRead])
+async def update_chapter(
+    chapter_id: int,
+    chapter_data: ChapterUpdate,
+    session: Session = Depends(get_session),
+):
+    try:
+        db_chapter = session.get(Chapter, chapter_id)
+        if not db_chapter:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+
+        subject = session.get(Subject, chapter_data.subject_id)
+        if not subject:
+            raise HTTPException(status_code=400, detail="Subject not found")
+
+        # Check for duplicate name within the same subject (excluding current chapter)
+        existing = session.exec(
+            select(Chapter).where(
+                Chapter.name == chapter_data.name,
+                Chapter.subject_id == chapter_data.subject_id,
+                Chapter.id != chapter_id,
+            )
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=400, detail="Another chapter with this name already exists"
+            )
+
+        # Update only provided fields
+        update_data = chapter_data.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(db_chapter, field, value)
+
+        session.add(db_chapter)
+        session.commit()
+        session.refresh(db_chapter)
+
+        return {
+            "data": ChapterRead(
+                id=db_chapter.id,
+                name=db_chapter.name,
+                subject_id=db_chapter.subject_id,
+                subject_name=subject.name,
+                chapter_number=db_chapter.chapter_number,
+                enabled=db_chapter.enabled,
+                is_premium=db_chapter.is_premium,
+                icon_url=db_chapter.icon_url,
+            )
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error updating chapter: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @router.delete("/{chapter_id}")
 async def delete_chapter(chapter_id: int, session: Session = Depends(get_session)):

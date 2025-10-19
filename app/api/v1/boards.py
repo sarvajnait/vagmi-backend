@@ -87,3 +87,58 @@ async def delete_board(board_id: int, session: Session = Depends(get_session)):
         session.rollback()
         logger.error(f"Error deleting board: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{board_id}", response_model=Dict[str, BoardRead])
+async def update_board(
+    board_id: int,
+    board_data: BoardCreate,
+    session: Session = Depends(get_session),
+):
+    try:
+        db_board = session.get(Board, board_id)
+        if not db_board:
+            raise HTTPException(status_code=404, detail="Board not found")
+
+        class_level = session.get(ClassLevel, board_data.class_level_id)
+        if not class_level:
+            raise HTTPException(status_code=400, detail="Class level not found")
+
+        # Prevent duplicate board name under the same class level
+        existing = session.exec(
+            select(Board).where(
+                Board.name == board_data.name,
+                Board.class_level_id == board_data.class_level_id,
+                Board.id != board_id,
+            )
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Another board with this name already exists for this class level",
+            )
+
+        # Update fields
+        db_board.name = board_data.name
+        db_board.class_level_id = board_data.class_level_id
+
+        session.add(db_board)
+        session.commit()
+        session.refresh(db_board)
+
+        return {
+            "data": BoardRead(
+                id=db_board.id,
+                name=db_board.name,
+                class_level_id=db_board.class_level_id,
+                class_level_name=class_level.name,
+            )
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error updating board: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    

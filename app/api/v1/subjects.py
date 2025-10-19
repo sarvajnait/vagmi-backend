@@ -74,6 +74,60 @@ async def create_subject(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.put("/{subject_id}", response_model=Dict[str, SubjectRead])
+async def update_subject(
+    subject_id: int,
+    subject_data: SubjectCreate,
+    session: Session = Depends(get_session),
+):
+    try:
+        db_subject = session.get(Subject, subject_id)
+        if not db_subject:
+            raise HTTPException(status_code=404, detail="Subject not found")
+
+        medium = session.get(Medium, subject_data.medium_id)
+        if not medium:
+            raise HTTPException(status_code=400, detail="Medium not found")
+
+        # Check for duplicate name within same medium (excluding current subject)
+        existing = session.exec(
+            select(Subject).where(
+                Subject.name == subject_data.name,
+                Subject.medium_id == subject_data.medium_id,
+                Subject.id != subject_id,
+            )
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Another subject with this name already exists for this medium",
+            )
+
+        # Update name and medium
+        db_subject.name = subject_data.name
+        db_subject.medium_id = subject_data.medium_id
+
+        session.add(db_subject)
+        session.commit()
+        session.refresh(db_subject)
+
+        return {
+            "data": SubjectRead(
+                id=db_subject.id,
+                name=db_subject.name,
+                medium_id=db_subject.medium_id,
+                medium_name=medium.name,
+            )
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error updating subject: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.delete("/{subject_id}")
 async def delete_subject(subject_id: int, session: Session = Depends(get_session)):
     try:

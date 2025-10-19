@@ -78,3 +78,57 @@ async def delete_medium(medium_id: int, session: Session = Depends(get_session))
         session.rollback()
         logger.error(f"Error deleting medium: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/{medium_id}", response_model=Dict[str, MediumRead])
+async def update_medium(
+    medium_id: int,
+    medium_data: MediumCreate,
+    session: Session = Depends(get_session),
+):
+    try:
+        db_medium = session.get(Medium, medium_id)
+        if not db_medium:
+            raise HTTPException(status_code=404, detail="Medium not found")
+
+        board = session.get(Board, medium_data.board_id)
+        if not board:
+            raise HTTPException(status_code=400, detail="Board not found")
+
+        # Prevent duplicate medium names under the same board (excluding itself)
+        existing = session.exec(
+            select(Medium)
+            .where(
+                Medium.name == medium_data.name,
+                Medium.board_id == medium_data.board_id,
+                Medium.id != medium_id,
+            )
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Another medium with this name already exists for this board",
+            )
+
+        # Update fields
+        db_medium.name = medium_data.name
+        db_medium.board_id = medium_data.board_id
+
+        session.add(db_medium)
+        session.commit()
+        session.refresh(db_medium)
+
+        return {
+            "data": MediumRead(
+                id=db_medium.id,
+                name=db_medium.name,
+                board_id=db_medium.board_id,
+                board_name=board.name,
+            )
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error updating medium: {e}")
+        raise HTTPException(status_code=400, detail=str(e))

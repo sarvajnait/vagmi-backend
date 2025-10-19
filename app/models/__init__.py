@@ -1,17 +1,5 @@
-from .academic_hierarchy import (
-    ClassLevel,
-    ClassLevelCreate,
-    ClassLevelRead,
-    Board,
-    BoardCreate,
-    BoardRead,
-    Medium,
-    MediumCreate,
-    MediumRead,
-    Subject,
-    SubjectCreate,
-    SubjectRead,
-    Chapter,
-    ChapterCreate,
-    ChapterRead,
-)
+from .academic_hierarchy import *
+from .user import User
+from .admin import Admin
+from .llm_resources import *
+from .student_content import *

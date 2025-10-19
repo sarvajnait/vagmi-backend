@@ -9,6 +9,7 @@ dependencies = [
     "aiohttp>=3.12.15",
     "alembic>=1.16.5",
     "asyncio>=4.0.0",
+    "boto3>=1.40.55",
     "chromadb>=1.0.20",
     "email-validator>=2.3.0",
     "fastapi>=0.116.1",
