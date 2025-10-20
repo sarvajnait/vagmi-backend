@@ -54,3 +54,25 @@ class StudentNotesCreate(StudentNotesBase):
 
 class StudentNotesRead(StudentNotesBase):
     id: int
+
+
+class StudentVideoBase(SQLModel):
+    chapter_id: int = Field(foreign_key="chapters.id")
+    title: str
+    description: Optional[str] = None
+    file_url: str
+
+
+class StudentVideo(StudentVideoBase, BaseModel, table=True):
+    __tablename__ = "student_videos"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chapter: "Chapter" = Relationship(back_populates="student_videos")
+
+
+class StudentVideoCreate(StudentVideoBase):
+    pass
+
+
+class StudentVideoRead(StudentVideoBase):
+    id: int

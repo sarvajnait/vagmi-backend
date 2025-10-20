@@ -2,7 +2,7 @@ from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.base import BaseModel
 from app.models.llm_resources import LLMTextbook, AdditionalNotes
-from app.models.student_content import StudentTextbook, StudentNotes
+from app.models.student_content import StudentTextbook, StudentNotes, StudentVideo
 
 
 # --------------------
@@ -139,6 +139,9 @@ class Chapter(ChapterBase, BaseModel, table=True):
         back_populates="chapter", cascade_delete=True
     )
     student_notes: List["StudentNotes"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+    student_videos: List["StudentVideo"] = Relationship(
         back_populates="chapter", cascade_delete=True
     )
 

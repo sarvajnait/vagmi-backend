@@ -18,7 +18,6 @@ from app.utils.sanitization import (
 )
 from app.core.config import settings
 from app.core.limiter import limiter
-import requests
 
 router = APIRouter()
 security = HTTPBearer()

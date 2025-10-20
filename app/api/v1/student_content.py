@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
 from loguru import logger
 from sqlmodel import Session
-from app.models import StudentTextbook,StudentNotes
+from app.models import StudentTextbook, StudentNotes, StudentVideo
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do
 
@@ -110,10 +110,7 @@ async def upload_note(
         session.commit()
         session.refresh(note)
 
-        return {
-            "message": "Note uploaded",
-            "data": note.dict()
-        }
+        return {"message": "Note uploaded", "data": note.dict()}
 
     except Exception as e:
         logger.error(f"Error uploading note: {e}")
@@ -162,4 +159,84 @@ async def delete_note(note_id: int, session: Session = Depends(get_session)):
         raise
     except Exception as e:
         logger.error(f"Error deleting note: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Video Endpoints
+# ============================================================
+@router.post("/videos")
+async def upload_video(
+    file: UploadFile = File(...),
+    chapter_id: int = Form(...),
+    title: str = Form(...),
+    description: Optional[str] = Form(None),
+    session: Session = Depends(get_session),
+):
+    """
+    Upload a video file directly to DigitalOcean and add to DB.
+    """
+    try:
+        do_path = f"chapters/{chapter_id}/student-content/videos"
+        file_url = upload_to_do(file, do_path)
+
+        video = StudentVideo(
+            chapter_id=chapter_id,
+            title=title,
+            description=description,
+            file_url=file_url,
+        )
+        session.add(video)
+        session.commit()
+        session.refresh(video)
+
+        return {"message": "Video uploaded", "data": video.model_dump()}
+
+    except Exception as e:
+        logger.error(f"Error uploading video: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/videos")
+async def get_videos(
+    chapter_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    """Get all videos or filter by chapter."""
+    try:
+        query = session.query(StudentVideo)
+        if chapter_id is not None:
+            query = query.filter(StudentVideo.chapter_id == chapter_id)
+        notes = query.all()
+        return {"data": [n.dict() for n in notes]}
+
+    except Exception as e:
+        logger.error(f"Error fetching videos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/videos/{video_id}")
+async def delete_video(video_id: int, session: Session = Depends(get_session)):
+    """Delete a video from DB and DigitalOcean Spaces."""
+    try:
+        video = session.get(StudentVideo, video_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+
+        if video.file_url:
+            try:
+                delete_from_do(video.file_url)
+            except Exception as e:
+                logger.error(f"Error deleting video file from DO: {e}")
+                raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
+
+        session.delete(video)
+        session.commit()
+
+        return {"message": f"Video '{video.title}' deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting video: {e}")
         raise HTTPException(status_code=500, detail=str(e))
