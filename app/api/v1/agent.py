@@ -26,36 +26,37 @@ async def get_hierarchy_names(
     medium_id: int,
     subject_id: int,
     chapter_id: int = None,
-    session: Session = None
+    session: Session = None,
 ) -> dict:
     """Helper function to get names from IDs for better logging and context"""
     names = {}
-    
+
     if session:
         try:
             class_level = session.get(ClassLevel, class_level_id)
             board = session.get(Board, board_id)
             medium = session.get(Medium, medium_id)
             subject = session.get(Subject, subject_id)
-            
-            names["class_level"] = class_level.name if class_level else str(class_level_id)
+
+            names["class_level"] = (
+                class_level.name if class_level else str(class_level_id)
+            )
             names["board"] = board.name if board else str(board_id)
             names["medium"] = medium.name if medium else str(medium_id)
             names["subject"] = subject.name if subject else str(subject_id)
-            
+
             if chapter_id:
                 chapter = session.get(Chapter, chapter_id)
                 names["chapter"] = chapter.name if chapter else str(chapter_id)
         except Exception as e:
             logger.warning(f"Could not fetch hierarchy names: {e}")
-    
+
     return names
 
 
 @router.post("/stream-chat")
 async def stream_chat(
-    chat_request: ChatRequest,
-    session: Session = Depends(get_session)
+    chat_request: ChatRequest, session: Session = Depends(get_session)
 ):
     """Stream chat responses with ID-based hierarchical filtering"""
 
@@ -68,7 +69,7 @@ async def stream_chat(
                 "medium_id": str(chat_request.medium_id),
                 "subject_id": str(chat_request.subject_id),
             }
-            
+
             if chat_request.chapter_id:
                 filters["chapter_id"] = str(chat_request.chapter_id)
 
@@ -79,7 +80,7 @@ async def stream_chat(
                 chat_request.medium_id,
                 chat_request.subject_id,
                 chat_request.chapter_id,
-                session
+                session,
             )
 
             logger.info(f"Chat request - Filters: {filters}, Context: {names}")
@@ -91,7 +92,7 @@ async def stream_chat(
             filter_key = f"{chat_request.class_level_id}_{chat_request.board_id}_{chat_request.medium_id}_{chat_request.subject_id}"
             if chat_request.chapter_id:
                 filter_key += f"_{chat_request.chapter_id}"
-            
+
             config = {"configurable": {"thread_id": f"session_{filter_key}"}}
 
             input_messages = [{"role": "user", "content": chat_request.message}]

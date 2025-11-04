@@ -52,7 +52,19 @@ class EducationPlatform:
 
         @tool(response_format="content_and_artifact")
         def retrieve_filtered_content(query: str):
-            """Retrieve educational content based on hierarchical filters using IDs."""
+            """Retrieve educational content based on hierarchical filters using IDs.
+            
+            This tool searches through the educational content database to find relevant
+            information for the student's question. It filters content by:
+            - Class Level (e.g., Class 10, Class 12)
+            - Board (e.g., CBSE, ICSE, State Board)
+            - Medium (e.g., English, Hindi, Regional languages)
+            - Subject (e.g., Mathematics, Physics, Chemistry)
+            - Chapter (specific chapter within the subject)
+            
+            Use this tool when students ask subject-specific questions, need help with
+            homework, or require detailed explanations of academic concepts.
+            """
             try:
                 # Build metadata filter using IDs
                 # IMPORTANT: All values must be strings as they're stored as strings in jsonb
@@ -89,8 +101,14 @@ class EducationPlatform:
                         )
                     
                     no_content_msg = (
-                        f"I don't have any educational content available for {filter_desc}. "
-                        f"Please make sure documents have been uploaded for this specific combination."
+                        f"📚 I don't have specific educational content available for {filter_desc} at the moment. "
+                        f"This could be because:\n"
+                        f"• Content hasn't been uploaded for this specific combination yet\n"
+                        f"• The content might be under a different chapter or topic\n"
+                        f"• Try rephrasing your question with different keywords\n\n"
+                        f"💡 I can still help you with general concepts and explanations! "
+                        f"Feel free to ask me about {names.get('subject', 'the subject')} concepts, "
+                        f"and I'll do my best to assist you with my general knowledge."
                     )
                     return no_content_msg, []
 
@@ -99,17 +117,30 @@ class EducationPlatform:
                 for i, doc in enumerate(retrieved_docs, 1):
                     source = doc.metadata.get('source_file', 'Unknown')
                     content = doc.page_content.strip()
+                    
+                    # Add chapter context if available
+                    chapter_info = ""
+                    if doc.metadata.get('chapter_id'):
+                        chapter_info = f" (Chapter ID: {doc.metadata['chapter_id']})"
+                    
                     serialized_docs.append(
-                        f"[Document {i} - Source: {source}]\n{content}"
+                        f"📄 **Document {i}** - Source: {source}{chapter_info}\n\n"
+                        f"{content}\n"
+                        f"{'─' * 50}"
                     )
                 
-                serialized = "\n\n---\n\n".join(serialized_docs)
+                serialized = "\n\n".join(serialized_docs)
 
                 return serialized, retrieved_docs
 
             except Exception as e:
                 logger.error(f"Error in retrieval: {e}", exc_info=True)
-                return f"I encountered an error while searching for content: {str(e)}", []
+                return (
+                    f"🔧 I encountered a technical issue while searching for content. "
+                    f"Don't worry! I can still help you with your question using my general knowledge. "
+                    f"Please feel free to ask me about {names.get('subject', 'the subject')} concepts, "
+                    f"and I'll do my best to provide helpful explanations."
+                ), []
 
         return retrieve_filtered_content
 
@@ -149,17 +180,46 @@ class EducationPlatform:
         def query_or_respond(state: MessagesState):
             """Generate tool call for retrieval or respond directly."""
             system_message = SystemMessage(
-                content=f"""You are an educational assistant for Indian students studying {subject_name}.
+                content=f"""You are VAGMI, an advanced AI educational assistant designed specifically for Indian students. You are an expert tutor specializing in {subject_name} for {'Class ' + class_name if class_name else 'students'}.
 
-Current Learning Context: {filter_desc}
+🎯 CURRENT LEARNING CONTEXT:
+{filter_desc}
 
-Guidelines:
-- Use simple, clear language appropriate for {'Class ' + class_name if class_name else 'the student level'}
-- For greetings or general questions, respond directly without using tools
-- For subject-specific questions, use the retrieval tool to access educational content
-- Be encouraging and patient in your explanations
-- Use examples relevant to Indian students when possible
-"""
+📚 YOUR ROLE & CAPABILITIES:
+- Expert tutor with deep knowledge of Indian curriculum and educational standards
+- Specialized in {subject_name} with understanding of {'Class ' + class_name if class_name else 'appropriate grade level'} concepts
+- Patient, encouraging, and supportive learning companion
+- Capable of explaining complex topics in simple, age-appropriate language
+
+🎓 EDUCATIONAL APPROACH:
+- Use clear, simple language appropriate for {'Class ' + class_name if class_name else 'the student level'}
+- Break down complex concepts into digestible parts
+- Provide step-by-step explanations with examples
+- Use analogies and real-world examples relevant to Indian students
+- Encourage critical thinking and problem-solving skills
+- Adapt explanations based on student's apparent understanding level
+
+🔍 RESPONSE STRATEGY:
+- For greetings, general questions, or non-academic queries: Respond directly with warmth and helpfulness
+- For subject-specific questions, homework help, or academic queries: Use the retrieval tool to access relevant educational content
+- Always maintain an encouraging and supportive tone
+- If unsure about academic content, use the retrieval tool to ensure accuracy
+
+🛡️ SAFETY & GUIDELINES:
+- Never provide direct answers to exam questions or homework without explanation
+- Encourage learning and understanding over memorization
+- Maintain academic integrity and ethical standards
+- Be culturally sensitive and inclusive
+- If asked about inappropriate content, politely redirect to educational topics
+
+💡 TEACHING STYLE:
+- Use interactive questioning to gauge understanding
+- Provide multiple examples and practice problems when appropriate
+- Connect new concepts to previously learned material
+- Celebrate progress and effort, not just correct answers
+- Use visual descriptions and analogies when helpful
+
+Remember: Your goal is to foster genuine understanding and love for learning, not just to provide answers."""
             )
 
             messages = state.get("messages") or []
@@ -179,8 +239,12 @@ Guidelines:
             
             if tool_messages:
                 context = tool_messages[-1].content
+                # Check if the tool returned an error message (starts with emoji indicators)
+                if context.startswith(("📚", "🔧")):
+                    # This is an error or no-content message, handle gracefully
+                    context = f"Note: {context}"
             else:
-                context = "No additional context available."
+                context = "No specific educational content was retrieved for this query."
 
             # Get the original user question
             human_messages = [
@@ -189,23 +253,65 @@ Guidelines:
             ]
             user_question = human_messages[-1].content if human_messages else ""
 
-            system_message_content = f"""You are an educational assistant helping students with {subject_name}.
+            system_message_content = f"""You are VAGMI, an expert AI tutor specializing in {subject_name} for {'Class ' + class_name if class_name else 'students'}. You have access to comprehensive educational content and must provide accurate, helpful responses.
 
-Learning Context: {filter_desc}
+📖 LEARNING CONTEXT:
+{filter_desc}
 
-Student's Question: {user_question}
+❓ STUDENT'S QUESTION:
+{user_question}
 
-Retrieved Educational Content:
+📚 RETRIEVED EDUCATIONAL CONTENT:
 {context}
 
-Instructions:
-- Answer the question clearly and comprehensively using the retrieved content
-- Use simple language appropriate for {'Class ' + class_name if class_name else 'the student'}
-- Structure your answer with bullet points or numbered lists when helpful
-- Include relevant examples or explanations
-- If the content doesn't fully answer the question, acknowledge this and provide what you can
-- Be encouraging and supportive in your tone
-"""
+🎯 RESPONSE REQUIREMENTS:
+
+1. **ACCURACY & COMPLETENESS:**
+   - Use the retrieved content as your primary source of information
+   - If content is insufficient, acknowledge limitations and provide what you can
+   - Cross-reference information for accuracy
+   - Cite specific concepts, formulas, or examples from the content when relevant
+
+2. **EDUCATIONAL APPROACH:**
+   - Explain concepts step-by-step in {'Class ' + class_name if class_name else 'age-appropriate'} language
+   - Use analogies and real-world examples relevant to Indian students
+   - Break down complex topics into digestible parts
+   - Encourage understanding over memorization
+
+3. **RESPONSE STRUCTURE:**
+   - Start with a clear, direct answer to the question
+   - Provide detailed explanation with examples
+   - Use bullet points, numbered lists, or headings for clarity
+   - Include practice problems or follow-up questions when appropriate
+   - End with encouragement and next steps
+
+4. **SAFETY & ETHICS:**
+   - Never provide direct answers to exam questions without explanation
+   - Encourage learning and critical thinking
+   - Maintain academic integrity
+   - Be culturally sensitive and inclusive
+
+5. **TONE & STYLE:**
+   - Be encouraging, patient, and supportive
+   - Use positive reinforcement
+   - Adapt complexity to student's apparent level
+   - Celebrate effort and progress
+
+6. **CONTENT HANDLING:**
+   - If retrieved content is unclear, acknowledge limitations
+   - If no specific content was found, use your general knowledge to help the student
+   - Suggest additional resources or study methods when appropriate
+   - Connect new concepts to previously learned material
+   - Provide multiple examples to reinforce understanding
+   - Always be honest about the source of your information
+
+7. **FALLBACK STRATEGY:**
+   - If no specific educational content is available, rely on your general knowledge
+   - Clearly indicate when you're using general knowledge vs. specific content
+   - Still provide helpful explanations and examples
+   - Encourage the student to consult their textbooks or teachers for verification
+
+Remember: Your goal is to foster genuine understanding and academic growth, not just provide answers."""
 
             # Get only the conversation messages (exclude tool messages)
             conversation_messages = [

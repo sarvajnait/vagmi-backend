@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from app.models.academic_hierarchy import Medium
 
 
-class User(BaseModel, table=True):
+class User(BaseModel, table=True):  
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(default=None, index=True)
     phone: str = Field(unique=True, index=True)
