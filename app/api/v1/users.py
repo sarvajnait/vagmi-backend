@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session
+from sqlmodel import Session, select
 from pydantic import BaseModel
 
 from app.models.user import User
@@ -9,7 +9,6 @@ from app.utils.sanitization import sanitize_string
 from .auth import get_current_user  # reuse your auth dependency
 
 router = APIRouter()
-
 
 class UserProfileUpdate(BaseModel):
     # Only allow updating fields that exist on the User model and are safe
@@ -55,3 +54,18 @@ async def update_profile(
         medium_id=user.medium_id,
         class_level_id=user.class_level_id,
     )
+
+
+@router.delete("/delete-charan")
+async def delete_charan(
+    session: Session = Depends(get_session),
+):
+    target_phone = "7406832289"
+    user = session.exec(select(User).where(User.phone == target_phone)).first()
+
+    if not user:
+        return {"deleted": False, "message": "User not found"}
+
+    session.delete(user)
+    session.commit()
+    return {"deleted": True}
