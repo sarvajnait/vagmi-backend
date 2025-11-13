@@ -143,6 +143,10 @@ class Settings:
 
         self.TEXTLOCAL_API_KEY = os.getenv("TEXTLOCAL_API_KEY", "")
         self.TEXTLOCAL_SENDER = os.getenv("TEXTLOCAL_SENDER", "")
+        self.DO_SPACES_ACCESS_KEY = os.getenv("DO_SPACES_ACCESS_KEY", "")
+        self.DO_SPACES_SECRET_KEY = os.getenv("DO_SPACES_SECRET_KEY", "")
+        self.MSG91_AUTH_KEY = os.getenv("MSG91_AUTH_KEY", "")
+        self.MSG91_TEMPLATE_ID = os.getenv("MSG91_TEMPLATE_ID", "")
 
         # JWT Configuration
         self.JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")

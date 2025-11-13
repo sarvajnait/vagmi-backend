@@ -236,10 +236,8 @@ async def check_user_exists(
         }
 
     otp, secret = generate_otp()
-    print(otp)
-    sms_text = f"{otp} is the OTP to verify your mobile number for Cherri Learn. This OTP is valid for 5 minutes. pls do not share it with anyone.\n {app_signature}"
 
-    send_sms(phone, sms_text)
+    send_sms(phone, otp)
     return {
         "status": "success",
         "message": "OTP sent",
@@ -254,9 +252,9 @@ async def send_otp(
 ):
     phone = sanitize_phone(phone)
     otp, secret = generate_otp()
-    print(otp)
-    sms_text = f"{otp} is the OTP to verify your mobile number for Cherri Learn. This OTP is valid for 5 minutes. pls do not share it with anyone.\n {app_signature}"
-    send_sms(phone, sms_text)
+
+    send_sms(phone,otp)
+
     return {
         "status": "success",
         "message": "OTP sent",
