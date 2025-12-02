@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Optional
 from sqlmodel import Field, Relationship, Column, Integer, ForeignKey
 from app.models.base import BaseModel
+from datetime import date
 import bcrypt
 
 if TYPE_CHECKING:
@@ -9,11 +10,13 @@ if TYPE_CHECKING:
     from app.models.academic_hierarchy import Medium
 
 
-class User(BaseModel, table=True):  
+class User(BaseModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(default=None, index=True)
     phone: str = Field(unique=True, index=True)
     hashed_password: str
+    dob: Optional[date] = Field(default=None)
+    gender: Optional[str] = Field(default=None, max_length=20)
 
     # Option 1: Using sa_column with ForeignKey
     class_level_id: Optional[int] = Field(

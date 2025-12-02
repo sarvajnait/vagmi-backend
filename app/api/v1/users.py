@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from pydantic import BaseModel
+from datetime import date
 
 from app.models.user import User
 from app.schemas.auth import UserResponse
@@ -16,6 +17,8 @@ class UserProfileUpdate(BaseModel):
     board_id: int | None = None
     medium_id: int | None = None
     class_level_id: int | None = None
+    dob: date | None = None
+    gender: str | None = None
 
 
 @router.put("/me", response_model=UserResponse)
@@ -42,6 +45,12 @@ async def update_profile(
     if "class_level_id" in data:
         user.class_level_id = data["class_level_id"]
 
+    if "dob" in data:
+        user.dob = data["dob"]
+
+    if "gender" in data and data["gender"] is not None:
+        user.gender = sanitize_string(data["gender"])
+
     session.add(user)
     session.commit()
     session.refresh(user)
@@ -53,6 +62,8 @@ async def update_profile(
         board_id=user.board_id,
         medium_id=user.medium_id,
         class_level_id=user.class_level_id,
+        dob=user.dob,
+        gender=user.gender,
     )
 
 

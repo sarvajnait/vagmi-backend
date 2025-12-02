@@ -5,6 +5,10 @@ from loguru import logger
 
 from app.models import Chapter, Subject
 from app.models import ChapterCreate, ChapterRead, ChapterUpdate
+from app.models import (
+    LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern,
+    StudentTextbook, StudentNotes, StudentVideo
+)
 from app.services.database import get_session
 
 router = APIRouter()
@@ -189,4 +193,167 @@ async def delete_chapter(chapter_id: int, session: Session = Depends(get_session
     except Exception as e:
         session.rollback()
         logger.error(f"Error deleting chapter: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{chapter_id}/llm-resources")
+async def get_chapter_llm_resources(
+    chapter_id: int, session: Session = Depends(get_session)
+):
+    """Get all LLM resources for a specific chapter."""
+    try:
+        # Verify chapter exists
+        chapter = session.get(Chapter, chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+
+        # Fetch all LLM resources
+        textbooks = session.exec(
+            select(LLMTextbook).where(LLMTextbook.chapter_id == chapter_id)
+        ).all()
+
+        additional_notes = session.exec(
+            select(AdditionalNotes).where(AdditionalNotes.chapter_id == chapter_id)
+        ).all()
+
+        images = session.exec(
+            select(LLMImage).where(LLMImage.chapter_id == chapter_id)
+        ).all()
+
+        llm_notes = session.exec(
+            select(LLMNote).where(LLMNote.chapter_id == chapter_id)
+        ).all()
+
+        qa_patterns = session.exec(
+            select(QAPattern).where(QAPattern.chapter_id == chapter_id)
+        ).all()
+
+        return {
+            "data": {
+                "chapter_id": chapter_id,
+                "chapter_name": chapter.name,
+                "textbooks": [t.dict() for t in textbooks],
+                "additional_notes": [n.dict() for n in additional_notes],
+                "images": [img.dict() for img in images],
+                "llm_notes": [note.dict() for note in llm_notes],
+                "qa_patterns": [qa.dict() for qa in qa_patterns],
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching LLM resources for chapter {chapter_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{chapter_id}/student-content")
+async def get_chapter_student_content(
+    chapter_id: int, session: Session = Depends(get_session)
+):
+    """Get all student content for a specific chapter."""
+    try:
+        # Verify chapter exists
+        chapter = session.get(Chapter, chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+
+        # Fetch all student content
+        textbooks = session.exec(
+            select(StudentTextbook).where(StudentTextbook.chapter_id == chapter_id)
+        ).all()
+
+        notes = session.exec(
+            select(StudentNotes).where(StudentNotes.chapter_id == chapter_id)
+        ).all()
+
+        videos = session.exec(
+            select(StudentVideo).where(StudentVideo.chapter_id == chapter_id)
+        ).all()
+
+        return {
+            "data": {
+                "chapter_id": chapter_id,
+                "chapter_name": chapter.name,
+                "textbooks": [t.dict() for t in textbooks],
+                "notes": [n.dict() for n in notes],
+                "videos": [v.dict() for v in videos],
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching student content for chapter {chapter_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{chapter_id}/all-content")
+async def get_chapter_all_content(
+    chapter_id: int, session: Session = Depends(get_session)
+):
+    """Get all content (both LLM resources and student content) for a specific chapter."""
+    try:
+        # Verify chapter exists
+        chapter = session.get(Chapter, chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+
+        # Fetch all LLM resources
+        llm_textbooks = session.exec(
+            select(LLMTextbook).where(LLMTextbook.chapter_id == chapter_id)
+        ).all()
+
+        additional_notes = session.exec(
+            select(AdditionalNotes).where(AdditionalNotes.chapter_id == chapter_id)
+        ).all()
+
+        images = session.exec(
+            select(LLMImage).where(LLMImage.chapter_id == chapter_id)
+        ).all()
+
+        llm_notes = session.exec(
+            select(LLMNote).where(LLMNote.chapter_id == chapter_id)
+        ).all()
+
+        qa_patterns = session.exec(
+            select(QAPattern).where(QAPattern.chapter_id == chapter_id)
+        ).all()
+
+        # Fetch all student content
+        student_textbooks = session.exec(
+            select(StudentTextbook).where(StudentTextbook.chapter_id == chapter_id)
+        ).all()
+
+        student_notes = session.exec(
+            select(StudentNotes).where(StudentNotes.chapter_id == chapter_id)
+        ).all()
+
+        student_videos = session.exec(
+            select(StudentVideo).where(StudentVideo.chapter_id == chapter_id)
+        ).all()
+
+        return {
+            "data": {
+                "chapter_id": chapter_id,
+                "chapter_name": chapter.name,
+                "llm_resources": {
+                    "textbooks": [t.dict() for t in llm_textbooks],
+                    "additional_notes": [n.dict() for n in additional_notes],
+                    "images": [img.dict() for img in images],
+                    "llm_notes": [note.dict() for note in llm_notes],
+                    "qa_patterns": [qa.dict() for qa in qa_patterns],
+                },
+                "student_content": {
+                    "textbooks": [t.dict() for t in student_textbooks],
+                    "notes": [n.dict() for n in student_notes],
+                    "videos": [v.dict() for v in student_videos],
+                },
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching all content for chapter {chapter_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

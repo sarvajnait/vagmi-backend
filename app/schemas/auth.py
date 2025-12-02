@@ -1,6 +1,6 @@
 """This file contains the authentication schema for the application."""
 
-from datetime import datetime
+from datetime import datetime, date
 
 from pydantic import BaseModel, Field
 
@@ -57,6 +57,8 @@ class UserResponse(BaseModel):
     board_id: int
     medium_id: int
     class_level_id: int
+    dob: date | None = None
+    gender: str | None = None
 
 
 class AdminCreate(BaseModel):

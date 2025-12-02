@@ -14,6 +14,7 @@ platform = EducationPlatform()
 COLLECTION_NAME_TEXTBOOKS = "llm_textbooks"
 COLLECTION_NAME_NOTES = "llm_notes"
 COLLECTION_NAME_QA = "qa_patterns"
+COLLECTION_NAME_IMAGES = "llm_images"
 COLLECTION_NAME = COLLECTION_NAME_TEXTBOOKS  # For backwards compatibility
 
 
@@ -41,7 +42,7 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
                 }
             )
 
-        platform.vector_store.add_documents(documents)
+        platform.vector_store_textbooks.add_documents(documents)
         logger.info(f"Successfully uploaded {len(documents)} document chunks")
         return len(documents)
 
@@ -132,7 +133,7 @@ async def delete_textbook(textbook_id: int, session: Session = Depends(get_sessi
         """
         result = session.execute(
             text(query),
-            {"collection_name": COLLECTION_NAME, "textbook_id": str(textbook_id)},
+            {"collection_name": COLLECTION_NAME_TEXTBOOKS, "textbook_id": str(textbook_id)},
         )
         deleted_count = result.rowcount
         session.commit()
@@ -325,12 +326,18 @@ async def delete_image(image_id: int, session: Session = Depends(get_session)):
 
         # Delete from vector store
         try:
-            # Delete by metadata filter
+            # Delete by metadata filter from the correct collection
+            query = """
+            DELETE FROM langchain_pg_embedding
+            WHERE collection_id = (
+                SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
+            )
+            AND cmetadata->>'image_id' = :image_id
+            AND cmetadata->>'content_type' = 'image'
+            """
             result = session.execute(
-                text(
-                    "DELETE FROM langchain_pg_embedding WHERE cmetadata->>'image_id' = :image_id AND cmetadata->>'content_type' = 'image'"
-                ),
-                {"image_id": str(image_id)}
+                text(query),
+                {"collection_name": COLLECTION_NAME_IMAGES, "image_id": str(image_id)}
             )
             session.commit()
             logger.info(f"Deleted image from vector store: image_id={image_id}")
@@ -374,10 +381,6 @@ async def upload_llm_note(
 ):
     """Upload an LLM note PDF to DigitalOcean and add to DB/vector store."""
     try:
-        from langchain_postgres import PGVector
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
-        from app.core.config import settings
-
         # Upload to DigitalOcean
         do_path = f"chapters/{chapter_id}/llm_notes"
         file_url = upload_to_do(file, do_path)
@@ -414,14 +417,7 @@ async def upload_llm_note(
             )
 
         # Add to vector store
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        vector_store = PGVector(
-            embeddings=embeddings,
-            collection_name=COLLECTION_NAME_NOTES,
-            connection=settings.POSTGRES_URL,
-            use_jsonb=True,
-        )
-        vector_store.add_documents(documents)
+        platform.vector_store_notes.add_documents(documents)
 
         doc_count = len(documents)
         logger.info(f"Successfully uploaded {doc_count} LLM note chunks")
@@ -515,10 +511,6 @@ async def upload_qa_pattern(
 ):
     """Upload a Q&A pattern PDF to DigitalOcean and add to DB/vector store."""
     try:
-        from langchain_postgres import PGVector
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
-        from app.core.config import settings
-
         # Upload to DigitalOcean
         do_path = f"chapters/{chapter_id}/qa_patterns"
         file_url = upload_to_do(file, do_path)
@@ -555,14 +547,7 @@ async def upload_qa_pattern(
             )
 
         # Add to vector store
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        vector_store = PGVector(
-            embeddings=embeddings,
-            collection_name=COLLECTION_NAME_QA,
-            connection=settings.POSTGRES_URL,
-            use_jsonb=True,
-        )
-        vector_store.add_documents(documents)
+        platform.vector_store_qa.add_documents(documents)
 
         doc_count = len(documents)
         logger.info(f"Successfully uploaded {doc_count} Q&A pattern chunks")
