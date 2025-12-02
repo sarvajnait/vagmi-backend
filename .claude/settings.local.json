@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm:*)",
+      "Bash(alembic revision:*)",
+      "Bash(python -m alembic revision:*)",
+      "Bash(.venv/Scripts/alembic revision --autogenerate -m \"add llm_images table\")",
+      "Bash(.venv/Scripts/alembic upgrade:*)",
+      "Bash(.venv/Scripts/alembic revision:*)",
+      "Bash(python -m py_compile:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

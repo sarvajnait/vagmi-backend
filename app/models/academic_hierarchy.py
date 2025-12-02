@@ -1,7 +1,7 @@
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.base import BaseModel
-from app.models.llm_resources import LLMTextbook, AdditionalNotes
+from app.models.llm_resources import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern
 from app.models.student_content import StudentTextbook, StudentNotes, StudentVideo
 
 
@@ -130,6 +130,15 @@ class Chapter(ChapterBase, BaseModel, table=True):
     subject: Subject = Relationship(back_populates="chapters")
 
     llm_textbooks: List["LLMTextbook"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+    llm_images: List["LLMImage"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+    llm_notes: List["LLMNote"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+    qa_patterns: List["QAPattern"] = Relationship(
         back_populates="chapter", cascade_delete=True
     )
     student_textbooks: List["StudentTextbook"] = Relationship(

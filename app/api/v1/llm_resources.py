@@ -2,7 +2,7 @@ from typing import Dict, Optional
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
 from loguru import logger
 from sqlmodel import Session, text
-from app.models import LLMTextbook, AdditionalNotes
+from app.models import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern
 from app.services.database import get_session
 from app.core.langgraph.graph import EducationPlatform
 from langchain_community.document_loaders import PyPDFLoader
@@ -11,7 +11,10 @@ from app.utils.files import upload_to_do, delete_from_do
 
 router = APIRouter()
 platform = EducationPlatform()
-COLLECTION_NAME = "llm_textbooks"
+COLLECTION_NAME_TEXTBOOKS = "llm_textbooks"
+COLLECTION_NAME_NOTES = "llm_notes"
+COLLECTION_NAME_QA = "qa_patterns"
+COLLECTION_NAME = COLLECTION_NAME_TEXTBOOKS  # For backwards compatibility
 
 
 # ============================================================
@@ -213,4 +216,429 @@ async def delete_additional_note(note_id: int, session: Session = Depends(get_se
 
     except Exception as e:
         logger.error(f"Error deleting note: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# LLM Image Endpoints
+# ============================================================
+@router.post("/image")
+async def upload_image(
+    file: UploadFile = File(...),
+    chapter_id: int = Form(...),
+    description: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    session: Session = Depends(get_session),
+):
+    """Upload an image to DigitalOcean, add to DB, and add to vector store with embeddings."""
+    try:
+        # Upload to DigitalOcean using utility
+        do_path = f"chapters/{chapter_id}/images"
+        file_url = upload_to_do(file, do_path)
+
+        # Parse tags from comma-separated string
+        tags_list = None
+        if tags:
+            tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+        # Add image to DB
+        image = LLMImage(
+            chapter_id=chapter_id,
+            title=file.filename,
+            description=description,
+            file_url=file_url,
+            tags=tags_list,
+        )
+        session.add(image)
+        session.commit()
+        session.refresh(image)
+
+        # Create embeddings for the image based on title + description + tags
+        # This allows semantic search on image metadata
+        try:
+            from langchain.schema import Document
+
+            # Combine title, description, and tags into searchable text
+            searchable_text = file.filename
+            if description:
+                searchable_text += f"\n{description}"
+            if tags_list:
+                searchable_text += f"\nTags: {', '.join(tags_list)}"
+
+            # Create a document with the searchable text and metadata
+            doc = Document(
+                page_content=searchable_text,
+                metadata={
+                    "chapter_id": str(chapter_id),
+                    "image_id": str(image.id),
+                    "title": file.filename,
+                    "description": description or "",
+                    "file_url": file_url,
+                    "tags": tags_list or [],
+                    "content_type": "image"
+                }
+            )
+
+            # Add to vector store for semantic search
+            platform.vector_store_images.add_documents([doc])
+            logger.info(f"Added image to vector store: {file.filename} (ID: {image.id})")
+
+        except Exception as e:
+            logger.error(f"Error adding image to vector store: {e}")
+            # Don't fail the upload if vector store fails, just log it
+
+        return {
+            "message": "Image uploaded successfully and added to vector store",
+            "data": image.dict(),
+        }
+
+    except Exception as e:
+        logger.error(f"Error uploading image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/image")
+async def get_images(
+    chapter_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    """Get images filtered by chapter."""
+    try:
+        query = session.query(LLMImage)
+        if chapter_id is not None:
+            query = query.filter(LLMImage.chapter_id == chapter_id)
+        images = query.all()
+        return {"data": [img.dict() for img in images]}
+
+    except Exception as e:
+        logger.error(f"Error fetching images: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/image/{image_id}")
+async def delete_image(image_id: int, session: Session = Depends(get_session)):
+    """Delete an image from DB, DigitalOcean Spaces, and vector store."""
+    try:
+        image = session.get(LLMImage, image_id)
+        if not image:
+            raise HTTPException(status_code=404, detail="Image not found")
+
+        # Delete from vector store
+        try:
+            # Delete by metadata filter
+            result = session.execute(
+                text(
+                    "DELETE FROM langchain_pg_embedding WHERE cmetadata->>'image_id' = :image_id AND cmetadata->>'content_type' = 'image'"
+                ),
+                {"image_id": str(image_id)}
+            )
+            session.commit()
+            logger.info(f"Deleted image from vector store: image_id={image_id}")
+        except Exception as e:
+            logger.error(f"Error deleting image from vector store: {e}")
+            # Continue with deletion even if vector store cleanup fails
+
+        # Delete file from DigitalOcean
+        if image.file_url:
+            try:
+                delete_from_do(image.file_url)
+                logger.info(f"Deleted file from DigitalOcean: {image.file_url}")
+            except Exception as e:
+                logger.error(f"Error deleting file from DigitalOcean: {e}")
+                raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
+
+        # Delete from DB
+        session.delete(image)
+        session.commit()
+
+        return {
+            "message": f"Image '{image.title}' deleted successfully from all stores",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# LLM Note Endpoints (PDF-based, for RAG)
+# ============================================================
+@router.post("/llm-note")
+async def upload_llm_note(
+    file: UploadFile = File(...),
+    chapter_id: int = Form(...),
+    description: Optional[str] = Form(None),
+    session: Session = Depends(get_session),
+):
+    """Upload an LLM note PDF to DigitalOcean and add to DB/vector store."""
+    try:
+        from langchain_postgres import PGVector
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        from app.core.config import settings
+
+        # Upload to DigitalOcean
+        do_path = f"chapters/{chapter_id}/llm_notes"
+        file_url = upload_to_do(file, do_path)
+
+        # Add note to DB
+        note = LLMNote(
+            chapter_id=chapter_id,
+            title=file.filename,
+            description=description,
+            file_url=file_url,
+        )
+        session.add(note)
+        session.commit()
+        session.refresh(note)
+
+        # Load and chunk the PDF
+        loader = PyPDFLoader(file_url)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=20,
+            length_function=len,
+        )
+        documents = loader.load_and_split(text_splitter)
+
+        for doc in documents:
+            doc.metadata.update(
+                {
+                    "chapter_id": str(chapter_id),
+                    "source_file": file.filename,
+                    "file_url": file_url,
+                    "note_id": str(note.id),
+                    "content_type": "llm_note",
+                }
+            )
+
+        # Add to vector store
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        vector_store = PGVector(
+            embeddings=embeddings,
+            collection_name=COLLECTION_NAME_NOTES,
+            connection=settings.POSTGRES_URL,
+            use_jsonb=True,
+        )
+        vector_store.add_documents(documents)
+
+        doc_count = len(documents)
+        logger.info(f"Successfully uploaded {doc_count} LLM note chunks")
+
+        return {
+            "message": "LLM note uploaded successfully",
+            "data": note.dict(),
+            "documents_processed": doc_count,
+        }
+
+    except Exception as e:
+        logger.error(f"Error uploading LLM note: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/llm-note")
+async def get_llm_notes(
+    chapter_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    """Get LLM notes filtered by chapter."""
+    try:
+        query = session.query(LLMNote)
+        if chapter_id is not None:
+            query = query.filter(LLMNote.chapter_id == chapter_id)
+        notes = query.all()
+        return {"data": [note.dict() for note in notes]}
+
+    except Exception as e:
+        logger.error(f"Error fetching LLM notes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/llm-note/{note_id}")
+async def delete_llm_note(note_id: int, session: Session = Depends(get_session)):
+    """Delete an LLM note from DB, vector store, and DigitalOcean."""
+    try:
+        note = session.get(LLMNote, note_id)
+        if not note:
+            raise HTTPException(status_code=404, detail="LLM note not found")
+
+        # Delete from vector store
+        query = """
+        DELETE FROM langchain_pg_embedding
+        WHERE collection_id = (
+            SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
+        )
+        AND cmetadata->>'note_id' = :note_id
+        """
+        result = session.execute(
+            text(query),
+            {"collection_name": COLLECTION_NAME_NOTES, "note_id": str(note_id)},
+        )
+        deleted_count = result.rowcount
+        session.commit()
+
+        # Delete file from DigitalOcean
+        if note.file_url:
+            try:
+                delete_from_do(note.file_url)
+                logger.info(f"Deleted file from DigitalOcean: {note.file_url}")
+            except Exception as e:
+                logger.error(f"Error deleting file from DigitalOcean: {e}")
+                raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
+
+        # Delete from DB
+        session.delete(note)
+        session.commit()
+
+        return {
+            "message": f"LLM note '{note.title}' deleted successfully",
+            "vector_chunks_deleted": deleted_count,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting LLM note: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Q&A Pattern Endpoints (PDF-based, for RAG)
+# ============================================================
+@router.post("/qa-pattern")
+async def upload_qa_pattern(
+    file: UploadFile = File(...),
+    chapter_id: int = Form(...),
+    description: Optional[str] = Form(None),
+    session: Session = Depends(get_session),
+):
+    """Upload a Q&A pattern PDF to DigitalOcean and add to DB/vector store."""
+    try:
+        from langchain_postgres import PGVector
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        from app.core.config import settings
+
+        # Upload to DigitalOcean
+        do_path = f"chapters/{chapter_id}/qa_patterns"
+        file_url = upload_to_do(file, do_path)
+
+        # Add pattern to DB
+        pattern = QAPattern(
+            chapter_id=chapter_id,
+            title=file.filename,
+            description=description,
+            file_url=file_url,
+        )
+        session.add(pattern)
+        session.commit()
+        session.refresh(pattern)
+
+        # Load and chunk the PDF
+        loader = PyPDFLoader(file_url)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=20,
+            length_function=len,
+        )
+        documents = loader.load_and_split(text_splitter)
+
+        for doc in documents:
+            doc.metadata.update(
+                {
+                    "chapter_id": str(chapter_id),
+                    "source_file": file.filename,
+                    "file_url": file_url,
+                    "pattern_id": str(pattern.id),
+                    "content_type": "qa_pattern",
+                }
+            )
+
+        # Add to vector store
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        vector_store = PGVector(
+            embeddings=embeddings,
+            collection_name=COLLECTION_NAME_QA,
+            connection=settings.POSTGRES_URL,
+            use_jsonb=True,
+        )
+        vector_store.add_documents(documents)
+
+        doc_count = len(documents)
+        logger.info(f"Successfully uploaded {doc_count} Q&A pattern chunks")
+
+        return {
+            "message": "Q&A pattern uploaded successfully",
+            "data": pattern.dict(),
+            "documents_processed": doc_count,
+        }
+
+    except Exception as e:
+        logger.error(f"Error uploading Q&A pattern: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/qa-pattern")
+async def get_qa_patterns(
+    chapter_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    """Get Q&A patterns filtered by chapter."""
+    try:
+        query = session.query(QAPattern)
+        if chapter_id is not None:
+            query = query.filter(QAPattern.chapter_id == chapter_id)
+        patterns = query.all()
+        return {"data": [pattern.dict() for pattern in patterns]}
+
+    except Exception as e:
+        logger.error(f"Error fetching Q&A patterns: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/qa-pattern/{pattern_id}")
+async def delete_qa_pattern(pattern_id: int, session: Session = Depends(get_session)):
+    """Delete a Q&A pattern from DB, vector store, and DigitalOcean."""
+    try:
+        pattern = session.get(QAPattern, pattern_id)
+        if not pattern:
+            raise HTTPException(status_code=404, detail="Q&A pattern not found")
+
+        # Delete from vector store
+        query = """
+        DELETE FROM langchain_pg_embedding
+        WHERE collection_id = (
+            SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
+        )
+        AND cmetadata->>'pattern_id' = :pattern_id
+        """
+        result = session.execute(
+            text(query),
+            {"collection_name": COLLECTION_NAME_QA, "pattern_id": str(pattern_id)},
+        )
+        deleted_count = result.rowcount
+        session.commit()
+
+        # Delete file from DigitalOcean
+        if pattern.file_url:
+            try:
+                delete_from_do(pattern.file_url)
+                logger.info(f"Deleted file from DigitalOcean: {pattern.file_url}")
+            except Exception as e:
+                logger.error(f"Error deleting file from DigitalOcean: {e}")
+                raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
+
+        # Delete from DB
+        session.delete(pattern)
+        session.commit()
+
+        return {
+            "message": f"Q&A pattern '{pattern.title}' deleted successfully",
+            "vector_chunks_deleted": deleted_count,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting Q&A pattern: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -58,7 +58,11 @@ async def get_hierarchy_names(
 async def stream_chat(
     chat_request: ChatRequest, session: Session = Depends(get_session)
 ):
-    """Stream chat responses with ID-based hierarchical filtering"""
+    """Stream chat responses with ID-based hierarchical filtering.
+
+    Images are now retrieved via the RAG system using the retrieve_images tool
+    based on semantic similarity to the query, not sent upfront.
+    """
 
     async def generate_response():
         try:
@@ -85,7 +89,7 @@ async def stream_chat(
 
             logger.info(f"Chat request - Filters: {filters}, Context: {names}")
 
-            # Create RAG graph with ID-based filters
+            # Create RAG graph with ID-based filters (now includes image retrieval tool)
             rag_graph = platform.create_rag_graph(filters, names)
 
             # Generate thread config using IDs for consistency
@@ -97,7 +101,7 @@ async def stream_chat(
 
             input_messages = [{"role": "user", "content": chat_request.message}]
 
-            # Stream response
+            # Stream text response
             async for event in rag_graph.astream(
                 {"messages": input_messages, "query": chat_request.message},
                 config=config,
