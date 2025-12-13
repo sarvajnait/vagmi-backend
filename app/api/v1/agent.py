@@ -11,7 +11,7 @@ from sqlmodel import Session
 from app.schemas import *
 from app.models import *
 from langchain_core.messages import AIMessage
-from app.core.langgraph.graph import EducationPlatform
+from app.core.agents.graph import EducationPlatform
 from app.services.database import get_session
 from loguru import logger
 
@@ -58,15 +58,10 @@ async def get_hierarchy_names(
 async def stream_chat(
     chat_request: ChatRequest, session: Session = Depends(get_session)
 ):
-    """Stream chat responses with ID-based hierarchical filtering.
-
-    Images are now retrieved via the RAG system using the retrieve_images tool
-    based on semantic similarity to the query, not sent upfront.
-    """
+    """Stream chat responses with ID-based hierarchical filtering."""
 
     async def generate_response():
         try:
-            # Build filters using IDs (stored as strings in vector store metadata)
             filters = {
                 "class_level_id": str(chat_request.class_level_id),
                 "board_id": str(chat_request.board_id),
@@ -77,7 +72,6 @@ async def stream_chat(
             if chat_request.chapter_id:
                 filters["chapter_id"] = str(chat_request.chapter_id)
 
-            # Get names for better context (optional but recommended)
             names = await get_hierarchy_names(
                 chat_request.class_level_id,
                 chat_request.board_id,
@@ -89,11 +83,14 @@ async def stream_chat(
 
             logger.info(f"Chat request - Filters: {filters}, Context: {names}")
 
-            # Create RAG graph with ID-based filters (now includes image retrieval tool)
-            rag_graph = platform.create_rag_graph(filters, names)
+            rag_graph = platform.create_educational_agent(filters, names)
 
-            # Generate thread config using IDs for consistency
-            filter_key = f"{chat_request.class_level_id}_{chat_request.board_id}_{chat_request.medium_id}_{chat_request.subject_id}"
+            filter_key = (
+                f"{chat_request.class_level_id}_"
+                f"{chat_request.board_id}_"
+                f"{chat_request.medium_id}_"
+                f"{chat_request.subject_id}"
+            )
             if chat_request.chapter_id:
                 filter_key += f"_{chat_request.chapter_id}"
 
@@ -101,30 +98,113 @@ async def stream_chat(
 
             input_messages = [{"role": "user", "content": chat_request.message}]
 
-            # Stream text response
-            async for event in rag_graph.astream(
+            retrieved_images_metadata = []
+            selected_images = []
+            images_streamed = False
+
+            async for event in rag_graph.astream_events(
                 {"messages": input_messages, "query": chat_request.message},
                 config=config,
-                stream_mode="messages",
+                version="v2",
             ):
-                message, metadata = event
-                if isinstance(message, AIMessage) and message.content:
-                    for chunk in message.content:
-                        if chunk:
-                            yield f"data: {json.dumps({'type': 'token', 'content': str(chunk)})}\n\n"
+                if not isinstance(event, dict):
+                    continue
+
+                event_type = event.get("event")
+                name = event.get("name", "")
+                data = event.get("data", {})
+
+                # --- IMAGE RETRIEVAL ---
+                if event_type == "on_tool_end" and "retrieve_images" in name:
+                    output = data.get("output")
+                    if hasattr(output, "artifact") and output.artifact:
+                        artifact = output.artifact
+                        if artifact.get("source") == "images":
+                            retrieved_images_metadata = artifact.get(
+                                "image_metadata", []
+                            )
+
+                # --- IMAGE SELECTION ---
+                elif event_type == "on_tool_end" and "select_relevant_images" in name:
+                    output = data.get("output")
+                    if hasattr(output, "artifact") and output.artifact:
+                        artifact = output.artifact
+                        if artifact.get("action") == "select_images":
+                            selected_ids = artifact.get("selected_image_ids", [])
+
+                            if not retrieved_images_metadata:
+                                continue
+
+                            selected_ids_str = [
+                                str(int(float(i))) for i in selected_ids
+                            ]
+                            selected_images = [
+                                img
+                                for img in retrieved_images_metadata
+                                if str(img.get("image_id")) in selected_ids_str
+                            ]
+
+                            if selected_images and not images_streamed:
+                                for image in selected_images:
+                                    yield (
+                                        f"data: {json.dumps({'type': 'image', 'data': image})}\n\n"
+                                    )
+                                images_streamed = True
+
+                # --- STREAM CLEAN TEXT ONLY ---
+                elif event_type == "on_chat_model_stream":
+                    chunk = data.get("chunk")
+                    if not chunk:
+                        continue
+
+                    # Skip tool calls
+                    if getattr(chunk, "tool_calls", None):
+                        continue
+
+                    content = chunk.content
+
+                    # Plain string
+                    if isinstance(content, str):
+                        yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
+
+                    # Gemini structured content
+                    elif isinstance(content, list):
+                        for part in content:
+                            if (
+                                isinstance(part, dict)
+                                and part.get("type") == "text"
+                                and part.get("text")
+                            ):
+                                yield f"data: {json.dumps({'type': 'token', 'content': part['text']})}\n\n"
+
+            # --- UPDATE CHECKPOINT WITH IMAGES ---
+            if selected_images:
+                try:
+                    state_snapshot = rag_graph.get_state(config)
+                    messages = state_snapshot.values.get("messages", [])
+
+                    for i in range(len(messages) - 1, -1, -1):
+                        if isinstance(messages[i], AIMessage):
+                            messages[i].additional_kwargs[
+                                "selected_images"
+                            ] = selected_images
+                            break
+
+                    rag_graph.update_state(config, {"messages": messages})
+                except Exception as e:
+                    logger.error(f"Error updating checkpoint: {e}", exc_info=True)
 
             yield f"data: {json.dumps({'type': 'complete', 'content': ''})}\n\n"
 
         except Exception as e:
-            logger.error(f"Error in stream chat: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'content': f'Error: {str(e)}'})}\n\n"
+            logger.exception("Error in stream chat")
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
     return StreamingResponse(
         generate_response(),
-        media_type="text/plain",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
         },
     )

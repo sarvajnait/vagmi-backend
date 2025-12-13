@@ -4,7 +4,7 @@ from loguru import logger
 from sqlmodel import Session, text
 from app.models import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern
 from app.services.database import get_session
-from app.core.langgraph.graph import EducationPlatform
+from app.core.agents.graph import EducationPlatform
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.utils.files import upload_to_do, delete_from_do
@@ -26,8 +26,14 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
     try:
         loader = PyPDFLoader(file_url)
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=20,
+            chunk_size=1500,  # ~400–500 words
+            chunk_overlap=200,  # preserves reasoning flow
+            separators=[
+                "\n\n",  # paragraphs
+                "\n",  # line breaks
+                ".",  # sentences
+                " ",  # fallback
+            ],
             length_function=len,
         )
         documents = loader.load_and_split(text_splitter)
@@ -133,7 +139,10 @@ async def delete_textbook(textbook_id: int, session: Session = Depends(get_sessi
         """
         result = session.execute(
             text(query),
-            {"collection_name": COLLECTION_NAME_TEXTBOOKS, "textbook_id": str(textbook_id)},
+            {
+                "collection_name": COLLECTION_NAME_TEXTBOOKS,
+                "textbook_id": str(textbook_id),
+            },
         )
         deleted_count = result.rowcount
         session.commit()
@@ -276,13 +285,15 @@ async def upload_image(
                     "description": description or "",
                     "file_url": file_url,
                     "tags": tags_list or [],
-                    "content_type": "image"
-                }
+                    "content_type": "image",
+                },
             )
 
             # Add to vector store for semantic search
             platform.vector_store_images.add_documents([doc])
-            logger.info(f"Added image to vector store: {file.filename} (ID: {image.id})")
+            logger.info(
+                f"Added image to vector store: {file.filename} (ID: {image.id})"
+            )
 
         except Exception as e:
             logger.error(f"Error adding image to vector store: {e}")
@@ -337,7 +348,7 @@ async def delete_image(image_id: int, session: Session = Depends(get_session)):
             """
             result = session.execute(
                 text(query),
-                {"collection_name": COLLECTION_NAME_IMAGES, "image_id": str(image_id)}
+                {"collection_name": COLLECTION_NAME_IMAGES, "image_id": str(image_id)},
             )
             session.commit()
             logger.info(f"Deleted image from vector store: image_id={image_id}")
@@ -399,8 +410,14 @@ async def upload_llm_note(
         # Load and chunk the PDF
         loader = PyPDFLoader(file_url)
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=20,
+            chunk_size=800,  # ~400–500 words
+            chunk_overlap=100,  # preserves reasoning flow
+            separators=[
+                "\n\n",  # paragraphs
+                "\n",  # line breaks
+                ".",  # sentences
+                " ",  # fallback
+            ],
             length_function=len,
         )
         documents = loader.load_and_split(text_splitter)
@@ -529,8 +546,14 @@ async def upload_qa_pattern(
         # Load and chunk the PDF
         loader = PyPDFLoader(file_url)
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=20,
+            chunk_size=600,
+            chunk_overlap=80,
+            separators=[
+                "\n\n",  # paragraphs
+                "\n",  # line breaks
+                ".",  # sentences
+                " ",  # fallback
+            ],
             length_function=len,
         )
         documents = loader.load_and_split(text_splitter)

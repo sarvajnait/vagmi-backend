@@ -7,7 +7,8 @@
       "Bash(.venv/Scripts/alembic revision --autogenerate -m \"add llm_images table\")",
       "Bash(.venv/Scripts/alembic upgrade:*)",
       "Bash(.venv/Scripts/alembic revision:*)",
-      "Bash(python -m py_compile:*)"
+      "Bash(python -m py_compile:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

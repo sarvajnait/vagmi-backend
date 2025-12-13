@@ -3,7 +3,7 @@ from sqlmodel import Session, select, text
 from typing import Dict, List, Optional
 from app.services.database import get_session
 from app.schemas import HierarchyFilter
-from app.core.langgraph.graph import EducationPlatform
+from app.core.agents.graph import EducationPlatform
 from app.models import *
 from app.schemas import *
 from loguru import logger
