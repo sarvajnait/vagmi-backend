@@ -31,28 +31,24 @@ vector_store_textbooks = PGVector(
     embeddings=embeddings,
     collection_name=COLLECTION_NAME_TEXTBOOKS,
     connection=CONNECTION_STRING,
-    use_jsonb=True,
 )
 
 vector_store_notes = PGVector(
     embeddings=embeddings,
     collection_name=COLLECTION_NAME_NOTES,
     connection=CONNECTION_STRING,
-    use_jsonb=True,
 )
 
 vector_store_qa = PGVector(
     embeddings=embeddings,
     collection_name=COLLECTION_NAME_QA,
     connection=CONNECTION_STRING,
-    use_jsonb=True,
 )
 
 vector_store_images = PGVector(
     embeddings=embeddings,
     collection_name=COLLECTION_NAME_IMAGES,
     connection=CONNECTION_STRING,
-    use_jsonb=True,
 )
 
 memory_checkpointer = MemorySaver()
@@ -155,7 +151,11 @@ class EducationPlatform:
         @tool(response_format="content_and_artifact")
         def retrieve_textbooks(query: str):
             """Retrieve textbook content for foundational concepts. Use for 'what is', definitions, and core explanations."""
-            metadata_filter = {}
+            metadata_filter = (
+                {"chapter_id": str(filters["chapter_id"])}
+                if filters.get("chapter_id")
+                else {}
+            )
             docs = self.vector_store_textbooks.similarity_search(
                 query, k=5, filter=metadata_filter
             )

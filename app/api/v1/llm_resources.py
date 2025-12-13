@@ -27,29 +27,7 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
     try:
         loader = PyPDFLoader(file_url)
 
-        # 1. Load pages (one Document per page)
         pages = loader.load()
-
-        # 2. Filter out low-information pages (no blacklist)
-        def is_valid_learning_page(text: str) -> bool:
-            text = text.strip()
-
-            # Too short to be meaningful
-            if len(text) < 80:
-                return False
-
-            # Mostly numbers / codes
-            digit_ratio = sum(c.isdigit() for c in text) / max(len(text), 1)
-            if digit_ratio > 0.3:
-                return False
-
-            return True
-
-        filtered_pages = [p for p in pages if is_valid_learning_page(p.page_content)]
-
-        if not filtered_pages:
-            logger.warning("No valid learning pages found in PDF")
-            return 0
 
         # 3. Chunk ACROSS pages (not page-by-page)
         text_splitter = RecursiveCharacterTextSplitter(
@@ -59,7 +37,11 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
             length_function=len,
         )
 
-        documents = text_splitter.split_documents(filtered_pages)
+        documents = text_splitter.split_documents(pages)
+
+        if not documents:
+            logger.warning("PDF contains no extractable text. Skipping vector storage.")
+            return 0
 
         # 4. Attach metadata
         for doc in documents:
@@ -73,7 +55,6 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
                 }
             )
 
-        # 5. Store in vector DB
         platform.vector_store_textbooks.add_documents(
             documents,
             ids=[str(uuid.uuid4()) for _ in documents],
@@ -441,17 +422,7 @@ async def upload_llm_note(
         loader = PyPDFLoader(file_url)
         pages = loader.load()
 
-        # ---- quality filter (same philosophy as textbook) ----
-        def is_valid_learning_page(text: str) -> bool:
-            text = text.strip()
-            if len(text) < 60:
-                return False
-            digit_ratio = sum(c.isdigit() for c in text) / max(len(text), 1)
-            if digit_ratio > 0.35:
-                return False
-            return True
-
-        filtered_pages = [p for p in pages if is_valid_learning_page(p.page_content)]
+        filtered_pages = [p for p in pages]
 
         if not filtered_pages:
             logger.warning("No valid LLM note content found")
@@ -465,6 +436,10 @@ async def upload_llm_note(
         )
 
         documents = text_splitter.split_documents(filtered_pages)
+
+        if not documents:
+            logger.warning("PDF contains no extractable text. Skipping vector storage.")
+            return 0
 
         for doc in documents:
             doc.metadata.update(
@@ -613,6 +588,10 @@ async def upload_qa_pattern(
         )
 
         documents = text_splitter.split_documents(filtered_pages)
+
+        if not documents:
+            logger.warning("PDF contains no extractable text. Skipping vector storage.")
+            return 0
 
         for doc in documents:
             doc.metadata.update(
