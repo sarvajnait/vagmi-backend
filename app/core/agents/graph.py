@@ -155,11 +155,7 @@ class EducationPlatform:
         @tool(response_format="content_and_artifact")
         def retrieve_textbooks(query: str):
             """Retrieve textbook content for foundational concepts. Use for 'what is', definitions, and core explanations."""
-            metadata_filter = (
-                {"chapter_id": str(filters["chapter_id"])}
-                if filters.get("chapter_id")
-                else {}
-            )
+            metadata_filter = {}
             docs = self.vector_store_textbooks.similarity_search(
                 query, k=5, filter=metadata_filter
             )

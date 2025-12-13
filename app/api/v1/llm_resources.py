@@ -8,6 +8,7 @@ from app.core.agents.graph import EducationPlatform
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.utils.files import upload_to_do, delete_from_do
+import uuid
 
 router = APIRouter()
 platform = EducationPlatform()
@@ -73,7 +74,10 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
             )
 
         # 5. Store in vector DB
-        platform.vector_store_textbooks.add_documents(documents)
+        platform.vector_store_textbooks.add_documents(
+            documents,
+            ids=[str(uuid.uuid4()) for _ in documents],
+        )
 
         logger.info(f"Uploaded {len(documents)} clean textbook chunks")
         return len(documents)
@@ -316,7 +320,10 @@ async def upload_image(
             )
 
             # Add to vector store for semantic search
-            platform.vector_store_images.add_documents([doc])
+            platform.vector_store_images.add_documents(
+                [doc],
+                ids=[str(uuid.uuid4())],
+            )
             logger.info(
                 f"Added image to vector store: {file.filename} (ID: {image.id})"
             )
@@ -470,7 +477,10 @@ async def upload_llm_note(
                 }
             )
 
-        platform.vector_store_notes.add_documents(documents)
+        platform.vector_store_notes.add_documents(
+            documents,
+            ids=[str(uuid.uuid4()) for _ in documents],
+        )
 
         logger.info(f"Uploaded {len(documents)} clean LLM note chunks")
 
@@ -615,7 +625,10 @@ async def upload_qa_pattern(
                 }
             )
 
-        platform.vector_store_qa.add_documents(documents)
+        platform.vector_store_qa.add_documents(
+            documents,
+            ids=[str(uuid.uuid4()) for _ in documents],
+        )
 
         logger.info(f"Uploaded {len(documents)} clean Q&A chunks")
 
