@@ -163,6 +163,10 @@ class EducationPlatform:
             docs = self.vector_store_textbooks.similarity_search(
                 query, k=5, filter=metadata_filter
             )
+            print("---")
+            print(docs)
+            print("---")
+
             if not docs:
                 return "No textbook content found.", []
 

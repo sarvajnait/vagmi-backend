@@ -22,22 +22,45 @@ COLLECTION_NAME = COLLECTION_NAME_TEXTBOOKS  # For backwards compatibility
 # Textbook Processing
 # ============================================================
 def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
-    """Upload document to vector store with hierarchical metadata."""
+    """Upload textbook to vector store with clean educational chunks."""
     try:
         loader = PyPDFLoader(file_url)
+
+        # 1. Load pages (one Document per page)
+        pages = loader.load()
+
+        # 2. Filter out low-information pages (no blacklist)
+        def is_valid_learning_page(text: str) -> bool:
+            text = text.strip()
+
+            # Too short to be meaningful
+            if len(text) < 80:
+                return False
+
+            # Mostly numbers / codes
+            digit_ratio = sum(c.isdigit() for c in text) / max(len(text), 1)
+            if digit_ratio > 0.3:
+                return False
+
+            return True
+
+        filtered_pages = [p for p in pages if is_valid_learning_page(p.page_content)]
+
+        if not filtered_pages:
+            logger.warning("No valid learning pages found in PDF")
+            return 0
+
+        # 3. Chunk ACROSS pages (not page-by-page)
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1500,  # ~400–500 words
-            chunk_overlap=200,  # preserves reasoning flow
-            separators=[
-                "\n\n",  # paragraphs
-                "\n",  # line breaks
-                ".",  # sentences
-                " ",  # fallback
-            ],
+            chunk_size=1500,
+            chunk_overlap=200,
+            separators=["\n\n", "\n", ".", " "],
             length_function=len,
         )
-        documents = loader.load_and_split(text_splitter)
 
+        documents = text_splitter.split_documents(filtered_pages)
+
+        # 4. Attach metadata
         for doc in documents:
             doc.metadata.update(
                 {
@@ -45,15 +68,18 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
                     "source_file": metadata["source_file"],
                     "file_url": metadata["file_url"],
                     "textbook_id": str(metadata["textbook_id"]),
+                    "content_type": "textbook",
                 }
             )
 
+        # 5. Store in vector DB
         platform.vector_store_textbooks.add_documents(documents)
-        logger.info(f"Successfully uploaded {len(documents)} document chunks")
+
+        logger.info(f"Uploaded {len(documents)} clean textbook chunks")
         return len(documents)
 
     except Exception as e:
-        logger.error(f"Error uploading document: {e}")
+        logger.error(f"Error uploading textbook: {e}", exc_info=True)
         raise
 
 
@@ -266,7 +292,7 @@ async def upload_image(
         # Create embeddings for the image based on title + description + tags
         # This allows semantic search on image metadata
         try:
-            from langchain.schema import Document
+            from langchain_core.documents import Document
 
             # Combine title, description, and tags into searchable text
             searchable_text = file.filename
@@ -390,13 +416,11 @@ async def upload_llm_note(
     description: Optional[str] = Form(None),
     session: Session = Depends(get_session),
 ):
-    """Upload an LLM note PDF to DigitalOcean and add to DB/vector store."""
+    """Upload an LLM note PDF and store clean chunks for RAG."""
     try:
-        # Upload to DigitalOcean
         do_path = f"chapters/{chapter_id}/llm_notes"
         file_url = upload_to_do(file, do_path)
 
-        # Add note to DB
         note = LLMNote(
             chapter_id=chapter_id,
             title=file.filename,
@@ -407,20 +431,33 @@ async def upload_llm_note(
         session.commit()
         session.refresh(note)
 
-        # Load and chunk the PDF
         loader = PyPDFLoader(file_url)
+        pages = loader.load()
+
+        # ---- quality filter (same philosophy as textbook) ----
+        def is_valid_learning_page(text: str) -> bool:
+            text = text.strip()
+            if len(text) < 60:
+                return False
+            digit_ratio = sum(c.isdigit() for c in text) / max(len(text), 1)
+            if digit_ratio > 0.35:
+                return False
+            return True
+
+        filtered_pages = [p for p in pages if is_valid_learning_page(p.page_content)]
+
+        if not filtered_pages:
+            logger.warning("No valid LLM note content found")
+            return {"message": "LLM note uploaded but no usable content found"}
+
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=800,  # ~400–500 words
-            chunk_overlap=100,  # preserves reasoning flow
-            separators=[
-                "\n\n",  # paragraphs
-                "\n",  # line breaks
-                ".",  # sentences
-                " ",  # fallback
-            ],
+            chunk_size=900,
+            chunk_overlap=120,
+            separators=["\n\n", "\n", ".", " "],
             length_function=len,
         )
-        documents = loader.load_and_split(text_splitter)
+
+        documents = text_splitter.split_documents(filtered_pages)
 
         for doc in documents:
             doc.metadata.update(
@@ -433,20 +470,18 @@ async def upload_llm_note(
                 }
             )
 
-        # Add to vector store
         platform.vector_store_notes.add_documents(documents)
 
-        doc_count = len(documents)
-        logger.info(f"Successfully uploaded {doc_count} LLM note chunks")
+        logger.info(f"Uploaded {len(documents)} clean LLM note chunks")
 
         return {
             "message": "LLM note uploaded successfully",
             "data": note.dict(),
-            "documents_processed": doc_count,
+            "documents_processed": len(documents),
         }
 
     except Exception as e:
-        logger.error(f"Error uploading LLM note: {e}")
+        logger.error(f"Error uploading LLM note: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -526,13 +561,11 @@ async def upload_qa_pattern(
     description: Optional[str] = Form(None),
     session: Session = Depends(get_session),
 ):
-    """Upload a Q&A pattern PDF to DigitalOcean and add to DB/vector store."""
+    """Upload Q&A pattern PDF with clean, reasoning-safe chunks."""
     try:
-        # Upload to DigitalOcean
         do_path = f"chapters/{chapter_id}/qa_patterns"
         file_url = upload_to_do(file, do_path)
 
-        # Add pattern to DB
         pattern = QAPattern(
             chapter_id=chapter_id,
             title=file.filename,
@@ -543,20 +576,33 @@ async def upload_qa_pattern(
         session.commit()
         session.refresh(pattern)
 
-        # Load and chunk the PDF
         loader = PyPDFLoader(file_url)
+        pages = loader.load()
+
+        # ---- quality filter (Q&A tolerant but safe) ----
+        def is_valid_qa_page(text: str) -> bool:
+            text = text.strip()
+            if len(text) < 50:
+                return False
+            digit_ratio = sum(c.isdigit() for c in text) / max(len(text), 1)
+            if digit_ratio > 0.45:
+                return False
+            return True
+
+        filtered_pages = [p for p in pages if is_valid_qa_page(p.page_content)]
+
+        if not filtered_pages:
+            logger.warning("No valid Q&A content found")
+            return {"message": "Q&A uploaded but no usable content found"}
+
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=600,
-            chunk_overlap=80,
-            separators=[
-                "\n\n",  # paragraphs
-                "\n",  # line breaks
-                ".",  # sentences
-                " ",  # fallback
-            ],
+            chunk_size=650,
+            chunk_overlap=100,
+            separators=["\n\n", "\n", ".", " "],
             length_function=len,
         )
-        documents = loader.load_and_split(text_splitter)
+
+        documents = text_splitter.split_documents(filtered_pages)
 
         for doc in documents:
             doc.metadata.update(
@@ -569,20 +615,18 @@ async def upload_qa_pattern(
                 }
             )
 
-        # Add to vector store
         platform.vector_store_qa.add_documents(documents)
 
-        doc_count = len(documents)
-        logger.info(f"Successfully uploaded {doc_count} Q&A pattern chunks")
+        logger.info(f"Uploaded {len(documents)} clean Q&A chunks")
 
         return {
             "message": "Q&A pattern uploaded successfully",
             "data": pattern.dict(),
-            "documents_processed": doc_count,
+            "documents_processed": len(documents),
         }
 
     except Exception as e:
-        logger.error(f"Error uploading Q&A pattern: {e}")
+        logger.error(f"Error uploading Q&A pattern: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

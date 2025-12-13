@@ -114,6 +114,9 @@ async def stream_chat(
                 name = event.get("name", "")
                 data = event.get("data", {})
 
+                if event_type == "on_tool_end":
+                    print(data)
+
                 # --- IMAGE RETRIEVAL ---
                 if event_type == "on_tool_end" and "retrieve_images" in name:
                     output = data.get("output")
