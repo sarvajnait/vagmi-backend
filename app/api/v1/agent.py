@@ -106,6 +106,7 @@ async def stream_chat(
             # Image state (per request)
             # -----------------------------
             retrieved_images_metadata = []
+            selected_images = []      # ✅ FIX: always defined
             images_streamed = False
 
             # -----------------------------
@@ -124,7 +125,7 @@ async def stream_chat(
                 data = event.get("data", {})
 
                 # -----------------------------
-                # IMAGE RETRIEVAL (merged tool)
+                # IMAGE RETRIEVAL
                 # -----------------------------
                 if (
                     event_type == "on_tool_end"
@@ -134,9 +135,8 @@ async def stream_chat(
 
                     if hasattr(output, "artifact") and output.artifact:
                         artifact = output.artifact
-
-                        # RESET image state for this retrieval
                         retrieved_images_metadata = artifact.get("image_metadata", [])
+                        selected_images = []     # reset per retrieval
                         images_streamed = False
 
                 # -----------------------------
@@ -204,14 +204,15 @@ async def stream_chat(
                 state_snapshot = rag_graph.get_state(config)
                 messages = state_snapshot.values.get("messages", [])
 
-                for i in range(len(messages) - 1, -1, -1):
-                    if isinstance(messages[i], AIMessage):
-                        messages[i].additional_kwargs[
-                            "selected_images"
-                        ] = selected_images
-                        break
+                if selected_images:
+                    for i in range(len(messages) - 1, -1, -1):
+                        if isinstance(messages[i], AIMessage):
+                            messages[i].additional_kwargs[
+                                "selected_images"
+                            ] = selected_images
+                            break
 
-                rag_graph.update_state(config, {"messages": messages})
+                    rag_graph.update_state(config, {"messages": messages})
 
             except Exception as e:
                 logger.error(f"Error updating checkpoint: {e}", exc_info=True)

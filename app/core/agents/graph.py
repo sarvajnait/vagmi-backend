@@ -54,6 +54,24 @@ vector_store_images = PGVector(
 memory_checkpointer = MemorySaver()
 
 
+def merge_chunks_remove_overlap(chunks: list[str], overlap_chars: int = 200) -> str:
+    if not chunks:
+        return ""
+
+    merged = chunks[0]
+
+    for next_chunk in chunks[1:]:
+        # Try to find overlap window
+        overlap_window = merged[-overlap_chars:]
+
+        if overlap_window and overlap_window in next_chunk:
+            merged += next_chunk.split(overlap_window, 1)[-1]
+        else:
+            merged += "\n\n" + next_chunk
+
+    return merged
+
+
 # Image selection tool
 @tool(response_format="content_and_artifact")
 def select_relevant_images(image_ids: list[int]):
@@ -203,6 +221,39 @@ class EducationPlatform:
             }
 
         @tool(response_format="content_and_artifact")
+        def retrieve_full_chapter_textbook():
+            """
+            Retrieve ALL textbook chunks for the current chapter.
+            Use ONLY when the user asks for a chapter summary or overview.
+            """
+            if not filters.get("chapter_id"):
+                return "No chapter context available.", []
+
+            chapter_id = str(filters["chapter_id"])
+
+            docs = vector_store_textbooks.similarity_search(
+                query="",  # empty query
+                k=1000,  # intentionally large
+                filter={"chapter_id": chapter_id},
+            )
+
+            if not docs:
+                return "No textbook content found for this chapter.", []
+
+            docs.sort(key=lambda d: d.metadata.get("chunk_index", 0))
+
+            raw_chunks = [d.page_content for d in docs]
+
+            cleaned_content = merge_chunks_remove_overlap(raw_chunks, overlap_chars=200)
+
+            return cleaned_content, {
+                "source": "full_chapter_textbook",
+                "chapter_id": chapter_id,
+                "document_count": len(docs),
+                "overlap_cleaned": True,
+            }
+
+        @tool(response_format="content_and_artifact")
         def retrieve_notes(query: str):
             """Retrieve study notes, summaries, and mnemonics. Use for revision and quick key points."""
             metadata_filter = (
@@ -346,7 +397,34 @@ Never select images after the response has started.
 
 ---
 
-## 📝 NOTES TOOL (STRICT RULE)
+## 📖 CHAPTER SUMMARY / OVERVIEW (STRICT RULE)
+
+### Tool: `retrieve_full_chapter_textbook`
+
+Use this tool ONLY when the student asks for:
+- chapter summary
+- summarize this chapter
+- chapter overview
+- brief explanation of the whole chapter
+- revision of the entire chapter
+
+Rules:
+- You MUST use `retrieve_full_chapter_textbook`
+- Do NOT use similarity-based textbook retrieval
+- Do NOT use Q&A or examples
+- Do NOT invent missing content
+
+After retrieving the full chapter:
+- Read all content
+- Identify main themes
+- Produce a structured summary:
+  - What the chapter is about
+  - Key ideas or sections
+  - Important terms (if relevant)
+
+---
+
+  ## 📝 NOTES TOOL (STRICT RULE)
 
 ### Tool: `retrieve_notes`
 
@@ -438,6 +516,7 @@ Start by choosing the right tool. Teach only what helps the student learn.
             model=llm,
             tools=[
                 retrieve_textbook_with_images,
+                retrieve_full_chapter_textbook,
                 retrieve_notes,
                 retrieve_qa_patterns,
                 select_relevant_images,
