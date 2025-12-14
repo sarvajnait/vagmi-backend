@@ -141,21 +141,22 @@ class Settings:
         self.GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
         self.MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", "100"))
 
-        self.TEXTLOCAL_API_KEY = os.getenv("TEXTLOCAL_API_KEY", "")
-        self.TEXTLOCAL_SENDER = os.getenv("TEXTLOCAL_SENDER", "")
         self.DO_SPACES_ACCESS_KEY = os.getenv("DO_SPACES_ACCESS_KEY", "")
         self.DO_SPACES_SECRET_KEY = os.getenv("DO_SPACES_SECRET_KEY", "")
         self.MSG91_AUTH_KEY = os.getenv("MSG91_AUTH_KEY", "")
         self.MSG91_TEMPLATE_ID = os.getenv("MSG91_TEMPLATE_ID", "")
 
         # JWT Configuration
-        self.JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+        self.JWT_SECRET_KEY = os.getenv(
+            "JWT_SECRET_KEY",
+            "7c9f8e2d4b1a6f0e93a5c7d2e8b4f1a9c6e0d5b3f7a2e4c8b9d1a6f3e0",
+        )
         self.JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
         self.JWT_ACCESS_TOKEN_EXPIRE_DAYS = int(
-            os.getenv("JWT_ACCESS_TOKEN_EXPIRE_DAYS", "15")
+            os.getenv("JWT_ACCESS_TOKEN_EXPIRE_DAYS", "60")
         )
         self.JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(
-            os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "30")
+            os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "180")
         )
 
         # Logging Configuration

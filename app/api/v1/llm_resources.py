@@ -1,13 +1,14 @@
 from typing import Dict, Optional
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
 from loguru import logger
-from sqlmodel import Session, text
+from sqlmodel import Session
 from app.models import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern
 from app.services.database import get_session
 from app.core.agents.graph import EducationPlatform
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.utils.files import upload_to_do, delete_from_do
+from app.utils.cleanup import delete_embeddings_by_resource_id
 import uuid
 from app.utils.files import compress_image
 
@@ -141,23 +142,10 @@ async def delete_textbook(textbook_id: int, session: Session = Depends(get_sessi
         if not textbook:
             raise HTTPException(status_code=404, detail="Textbook not found")
 
-        # Delete from vector store
-        query = """
-        DELETE FROM langchain_pg_embedding
-        WHERE collection_id = (
-            SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
+        # Delete from vector store using utility function
+        deleted_count = delete_embeddings_by_resource_id(
+            session, textbook_id, COLLECTION_NAME_TEXTBOOKS, "textbook_id"
         )
-        AND cmetadata->>'textbook_id' = :textbook_id
-        """
-        result = session.execute(
-            text(query),
-            {
-                "collection_name": COLLECTION_NAME_TEXTBOOKS,
-                "textbook_id": str(textbook_id),
-            },
-        )
-        deleted_count = result.rowcount
-        session.commit()
 
         # Delete file from DigitalOcean
         if textbook.file_url:
@@ -358,23 +346,12 @@ async def delete_image(image_id: int, session: Session = Depends(get_session)):
         if not image:
             raise HTTPException(status_code=404, detail="Image not found")
 
-        # Delete from vector store
+        # Delete from vector store using utility function
         try:
-            # Delete by metadata filter from the correct collection
-            query = """
-            DELETE FROM langchain_pg_embedding
-            WHERE collection_id = (
-                SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
+            deleted_count = delete_embeddings_by_resource_id(
+                session, image_id, COLLECTION_NAME_IMAGES, "image_id"
             )
-            AND cmetadata->>'image_id' = :image_id
-            AND cmetadata->>'content_type' = 'image'
-            """
-            result = session.execute(
-                text(query),
-                {"collection_name": COLLECTION_NAME_IMAGES, "image_id": str(image_id)},
-            )
-            session.commit()
-            logger.info(f"Deleted image from vector store: image_id={image_id}")
+            logger.info(f"Deleted {deleted_count} embeddings from vector store: image_id={image_id}")
         except Exception as e:
             logger.error(f"Error deleting image from vector store: {e}")
             # Continue with deletion even if vector store cleanup fails
@@ -505,20 +482,10 @@ async def delete_llm_note(note_id: int, session: Session = Depends(get_session))
         if not note:
             raise HTTPException(status_code=404, detail="LLM note not found")
 
-        # Delete from vector store
-        query = """
-        DELETE FROM langchain_pg_embedding
-        WHERE collection_id = (
-            SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
+        # Delete from vector store using utility function
+        deleted_count = delete_embeddings_by_resource_id(
+            session, note_id, COLLECTION_NAME_NOTES, "note_id"
         )
-        AND cmetadata->>'note_id' = :note_id
-        """
-        result = session.execute(
-            text(query),
-            {"collection_name": COLLECTION_NAME_NOTES, "note_id": str(note_id)},
-        )
-        deleted_count = result.rowcount
-        session.commit()
 
         # Delete file from DigitalOcean
         if note.file_url:
@@ -657,20 +624,10 @@ async def delete_qa_pattern(pattern_id: int, session: Session = Depends(get_sess
         if not pattern:
             raise HTTPException(status_code=404, detail="Q&A pattern not found")
 
-        # Delete from vector store
-        query = """
-        DELETE FROM langchain_pg_embedding
-        WHERE collection_id = (
-            SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
+        # Delete from vector store using utility function
+        deleted_count = delete_embeddings_by_resource_id(
+            session, pattern_id, COLLECTION_NAME_QA, "pattern_id"
         )
-        AND cmetadata->>'pattern_id' = :pattern_id
-        """
-        result = session.execute(
-            text(query),
-            {"collection_name": COLLECTION_NAME_QA, "pattern_id": str(pattern_id)},
-        )
-        deleted_count = result.rowcount
-        session.commit()
 
         # Delete file from DigitalOcean
         if pattern.file_url:

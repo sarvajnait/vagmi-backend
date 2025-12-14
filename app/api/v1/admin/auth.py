@@ -2,13 +2,12 @@ from fastapi import APIRouter, Depends, Body, Request, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlmodel import select, Session
 from loguru import logger
-from app.utils.otp import generate_otp, validate_otp, send_sms
+from app.utils.otp import validate_otp
 
 from app.models.admin import Admin
 from app.schemas.auth import (
     AdminCreate,
     TokenPair,
-    AuthResponse,
     AdminResponse,
     AdminAuthResponse,
 )
@@ -25,7 +24,6 @@ from app.utils.sanitization import (
 )
 from app.core.config import settings
 from app.core.limiter import limiter
-import requests
 
 router = APIRouter()
 security = HTTPBearer()

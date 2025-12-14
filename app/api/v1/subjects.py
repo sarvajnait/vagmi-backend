@@ -6,6 +6,7 @@ from loguru import logger
 from app.models import Subject, Medium
 from app.models import SubjectCreate, SubjectRead
 from app.services.database import get_session
+from app.utils.cleanup import cleanup_subject_resources
 
 router = APIRouter()
 
@@ -130,13 +131,28 @@ async def update_subject(
 
 @router.delete("/{subject_id}")
 async def delete_subject(subject_id: int, session: Session = Depends(get_session)):
+    """Delete a subject and all its related resources (chapters, files, embeddings, DB records)."""
     try:
         subject = session.get(Subject, subject_id)
         if not subject:
             raise HTTPException(status_code=404, detail="Subject not found")
+
+        # Clean up all related resources for all chapters in this subject
+        cleanup_stats = cleanup_subject_resources(session, subject_id)
+
+        # Delete the subject (cascade_delete relationships will handle related DB records)
         session.delete(subject)
         session.commit()
-        return {"message": "Subject deleted successfully"}
+
+        return {
+            "message": "Subject deleted successfully",
+            "cleanup_stats": {
+                "chapters_cleaned": cleanup_stats["chapters_cleaned"],
+                "total_files_deleted": cleanup_stats["total_files_deleted"],
+                "total_embeddings_deleted": cleanup_stats["total_embeddings_deleted"],
+                "errors": cleanup_stats["errors"] if cleanup_stats["errors"] else None,
+            },
+        }
     except HTTPException:
         raise
     except Exception as e:

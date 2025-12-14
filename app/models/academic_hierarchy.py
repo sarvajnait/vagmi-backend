@@ -1,7 +1,13 @@
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.base import BaseModel
-from app.models.llm_resources import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern
+from app.models.llm_resources import (
+    LLMTextbook,
+    AdditionalNotes,
+    LLMImage,
+    LLMNote,
+    QAPattern,
+)
 from app.models.student_content import StudentTextbook, StudentNotes, StudentVideo
 
 

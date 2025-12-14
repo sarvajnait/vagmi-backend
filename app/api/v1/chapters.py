@@ -10,6 +10,7 @@ from app.models import (
     StudentTextbook, StudentNotes, StudentVideo
 )
 from app.services.database import get_session
+from app.utils.cleanup import cleanup_chapter_resources
 
 router = APIRouter()
 
@@ -181,13 +182,27 @@ async def update_chapter(
 
 @router.delete("/{chapter_id}")
 async def delete_chapter(chapter_id: int, session: Session = Depends(get_session)):
+    """Delete a chapter and all its related resources (files, embeddings, DB records)."""
     try:
         chapter = session.get(Chapter, chapter_id)
         if not chapter:
             raise HTTPException(status_code=404, detail="Chapter not found")
+
+        # Clean up all related resources (files and embeddings) before deleting the chapter
+        cleanup_stats = cleanup_chapter_resources(session, chapter_id)
+        
+        # Delete the chapter (cascade_delete relationships will handle related DB records)
         session.delete(chapter)
         session.commit()
-        return {"message": "Chapter deleted successfully"}
+
+        return {
+            "message": "Chapter deleted successfully",
+            "cleanup_stats": {
+                "files_deleted": cleanup_stats["files_deleted"],
+                "embeddings_deleted": cleanup_stats["embeddings_deleted"],
+                "errors": cleanup_stats["errors"] if cleanup_stats["errors"] else None,
+            },
+        }
     except HTTPException:
         raise
     except Exception as e:
