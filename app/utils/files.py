@@ -1,10 +1,10 @@
 import os
 from fastapi import UploadFile, HTTPException
+from starlette.datastructures import Headers
 import boto3
 from loguru import logger
 from PIL import Image
 from io import BytesIO
-from fastapi import UploadFile
 
 DO_REGION = "blr1"
 DO_BUCKET = "vagmi"
@@ -100,11 +100,22 @@ def compress_image(
     image.save(buffer, format=format, **save_kwargs)
     buffer.seek(0)
 
-    # Create a new UploadFile-like object
+    # Determine content type based on format
+    content_type_map = {
+        "JPEG": "image/jpeg",
+        "PNG": "image/png",
+        "WEBP": "image/webp",
+    }
+    content_type = content_type_map.get(format.upper(), "image/jpeg")
+
+    # Create headers with content type
+    headers = Headers({"content-type": content_type})
+
+    # Create a new UploadFile with headers
     compressed_file = UploadFile(
-        filename=file.filename,
         file=buffer,
-        content_type=file.content_type,
+        filename=file.filename,
+        headers=headers,
     )
 
     return compressed_file
