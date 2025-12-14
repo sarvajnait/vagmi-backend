@@ -9,6 +9,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.utils.files import upload_to_do, delete_from_do
 import uuid
+from app.utils.files import compress_image
 
 router = APIRouter()
 platform = EducationPlatform()
@@ -33,7 +34,7 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1500,
             chunk_overlap=200,
-            separators=["\n\n", "\n", ".", " "],
+            separators=["\n\n", "\n", ". ", " "],
             length_function=len,
         )
 
@@ -254,8 +255,16 @@ async def upload_image(
     """Upload an image to DigitalOcean, add to DB, and add to vector store with embeddings."""
     try:
         # Upload to DigitalOcean using utility
+
+        compressed_file = compress_image(
+            file,
+            max_width=1600,
+            max_height=1600,
+            quality=80,
+        )
+
         do_path = f"chapters/{chapter_id}/images"
-        file_url = upload_to_do(file, do_path)
+        file_url = upload_to_do(compressed_file, do_path)
 
         # Parse tags from comma-separated string
         tags_list = None

@@ -4,7 +4,7 @@ from typing import Optional
 
 class HierarchyFilter(BaseModel):
     """Filter schema for educational hierarchy using database IDs.
-    
+
     Attributes:
         class_level_id: ID of the class level (e.g., Class 10, Class 12)
         board_id: ID of the educational board (e.g., CBSE, ICSE, State Board)
@@ -20,7 +20,7 @@ class HierarchyFilter(BaseModel):
 
 class DeleteRequest(BaseModel):
     """Request schema for deleting educational content using hierarchical IDs.
-    
+
     Attributes:
         filename: Name of the file to be deleted
         class_level_id: ID of the class level containing the content
@@ -40,12 +40,12 @@ class DeleteRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request schema for AI chat interactions with educational context.
-    
+
     This schema is used for chat requests to the AI tutor, providing the necessary
     hierarchical context to ensure responses are appropriate for the student's
     educational level and curriculum. The chapter_id is optional to allow for
     general subject-level queries.
-    
+
     Attributes:
         message: The student's question or message
         class_level_id: ID of the student's class level

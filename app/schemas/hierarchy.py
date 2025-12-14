@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 class HierarchyFilter(BaseModel):
     """Filter schema for educational hierarchy using database IDs.
-    
+
     Attributes:
         class_level_id: ID of the class level (e.g., Class 10, Class 12)
         board_id: ID of the educational board (e.g., CBSE, ICSE, State Board)

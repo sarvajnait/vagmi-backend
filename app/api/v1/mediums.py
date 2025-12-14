@@ -9,8 +9,11 @@ from app.services.database import get_session
 
 router = APIRouter()
 
+
 @router.get("/", response_model=Dict[str, List[MediumRead]])
-async def get_mediums(board_id: Optional[int] = Query(None), session: Session = Depends(get_session)):
+async def get_mediums(
+    board_id: Optional[int] = Query(None), session: Session = Depends(get_session)
+):
     try:
         query = select(Medium, Board).join(Board)
         if board_id:
@@ -31,6 +34,7 @@ async def get_mediums(board_id: Optional[int] = Query(None), session: Session = 
         logger.error(f"Error getting mediums: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/", response_model=Dict[str, MediumRead])
 async def create_medium(medium: MediumCreate, session: Session = Depends(get_session)):
     try:
@@ -39,10 +43,14 @@ async def create_medium(medium: MediumCreate, session: Session = Depends(get_ses
             raise HTTPException(status_code=400, detail="Board not found")
 
         existing = session.exec(
-            select(Medium).where(Medium.name == medium.name, Medium.board_id == medium.board_id)
+            select(Medium).where(
+                Medium.name == medium.name, Medium.board_id == medium.board_id
+            )
         ).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Medium already exists for this board")
+            raise HTTPException(
+                status_code=400, detail="Medium already exists for this board"
+            )
 
         db_medium = Medium.model_validate(medium)
         session.add(db_medium)
@@ -63,6 +71,7 @@ async def create_medium(medium: MediumCreate, session: Session = Depends(get_ses
         logger.error(f"Error creating medium: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @router.delete("/{medium_id}")
 async def delete_medium(medium_id: int, session: Session = Depends(get_session)):
     try:
@@ -78,6 +87,7 @@ async def delete_medium(medium_id: int, session: Session = Depends(get_session))
         session.rollback()
         logger.error(f"Error deleting medium: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.put("/{medium_id}", response_model=Dict[str, MediumRead])
 async def update_medium(
@@ -96,8 +106,7 @@ async def update_medium(
 
         # Prevent duplicate medium names under the same board (excluding itself)
         existing = session.exec(
-            select(Medium)
-            .where(
+            select(Medium).where(
                 Medium.name == medium_data.name,
                 Medium.board_id == medium_data.board_id,
                 Medium.id != medium_id,

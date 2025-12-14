@@ -2,6 +2,9 @@ import os
 from fastapi import UploadFile, HTTPException
 import boto3
 from loguru import logger
+from PIL import Image
+from io import BytesIO
+from fastapi import UploadFile
 
 DO_REGION = "blr1"
 DO_BUCKET = "vagmi"
@@ -61,3 +64,47 @@ def delete_from_do(file_url: str):
     except Exception as e:
         logger.error(f"Error deleting file from DigitalOcean: {e}")
         raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
+
+
+def compress_image(
+    file: UploadFile,
+    max_width: int = 1600,
+    max_height: int = 1600,
+    quality: int = 80,
+) -> UploadFile:
+    """
+    Compress an image UploadFile in-memory and return a new UploadFile.
+    """
+
+    image = Image.open(file.file)
+
+    # Convert RGBA / P to RGB (JPEG safe)
+    if image.mode in ("RGBA", "P"):
+        image = image.convert("RGB")
+
+    # Resize while keeping aspect ratio
+    image.thumbnail((max_width, max_height))
+
+    buffer = BytesIO()
+
+    # Decide format
+    format = image.format or "JPEG"
+    if format.upper() not in ["JPEG", "PNG", "WEBP"]:
+        format = "JPEG"
+
+    save_kwargs = {}
+    if format.upper() in ["JPEG", "WEBP"]:
+        save_kwargs["quality"] = quality
+        save_kwargs["optimize"] = True
+
+    image.save(buffer, format=format, **save_kwargs)
+    buffer.seek(0)
+
+    # Create a new UploadFile-like object
+    compressed_file = UploadFile(
+        filename=file.filename,
+        file=buffer,
+        content_type=file.content_type,
+    )
+
+    return compressed_file

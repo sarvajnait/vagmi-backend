@@ -69,6 +69,7 @@ async def delete_class_level(
         logger.error(f"Error deleting class level: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.put("/{class_level_id}", response_model=Dict[str, ClassLevelRead])
 async def update_class_level(
     class_level_id: int,
@@ -82,11 +83,16 @@ async def update_class_level(
 
         # Prevent duplicate names
         existing = session.exec(
-            select(ClassLevel)
-            .where(ClassLevel.name == class_level_data.name, ClassLevel.id != class_level_id)
+            select(ClassLevel).where(
+                ClassLevel.name == class_level_data.name,
+                ClassLevel.id != class_level_id,
+            )
         ).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Another class level with this name already exists")
+            raise HTTPException(
+                status_code=400,
+                detail="Another class level with this name already exists",
+            )
 
         # Update name
         db_class_level.name = class_level_data.name

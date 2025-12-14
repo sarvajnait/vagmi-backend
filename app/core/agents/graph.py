@@ -20,7 +20,7 @@ COLLECTION_NAME_IMAGES = "llm_images"
 # Initialize components
 embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
+    model="gemini-2.5-pro",
     verbose=False,
     temperature=0.3,
     streaming=True,
@@ -145,29 +145,62 @@ class EducationPlatform:
             finally:
                 session.close()
 
-        # 3. Define Tools with Closures (Capturing filters)
-        # We define them here so they have access to the specific 'filters' for this session
-
         @tool(response_format="content_and_artifact")
-        def retrieve_textbooks(query: str):
-            """Retrieve textbook content for foundational concepts. Use for 'what is', definitions, and core explanations."""
+        def retrieve_textbook_with_images(query: str):
+            """
+            Retrieves core textbook content and related images.
+            The agent may choose to ignore images if they are not useful.
+            """
             metadata_filter = (
                 {"chapter_id": str(filters["chapter_id"])}
                 if filters.get("chapter_id")
                 else {}
             )
-            docs = self.vector_store_textbooks.similarity_search(
+
+            text_docs = self.vector_store_textbooks.similarity_search(
                 query, k=5, filter=metadata_filter
             )
-            print("---")
-            print(docs)
-            print("---")
 
-            if not docs:
-                return "No textbook content found.", []
+            image_docs = self.vector_store_images.similarity_search(
+                query, k=5, filter=metadata_filter
+            )
 
-            content = "\n\n".join([f"📚 **Textbook**: {d.page_content}" for d in docs])
-            return content, {"documents": docs, "source": "textbooks"}
+            textbook_content = (
+                "\n\n".join(f"📚 **Textbook**: {d.page_content}" for d in text_docs)
+                if text_docs
+                else "No textbook content found."
+            )
+
+            image_metadata = []
+            serialized_images = []
+
+            for i, doc in enumerate(image_docs, 1):
+                serialized_images.append(
+                    f"🖼️ **Image {i}**: {doc.metadata.get('title')} "
+                    f"(ID: {doc.metadata.get('image_id')})\n"
+                    f"Desc: {doc.metadata.get('description')}"
+                )
+                image_metadata.append(
+                    {
+                        "image_id": doc.metadata.get("image_id"),
+                        "file_url": doc.metadata.get("file_url"),
+                        "title": doc.metadata.get("title"),
+                        "description": doc.metadata.get("description"),
+                        "tags": doc.metadata.get("tags", []),
+                    }
+                )
+
+            content = textbook_content
+            if serialized_images:
+                content += "\n\n🖼️ **Available Visual Aids:**\n" + "\n\n".join(
+                    serialized_images
+                )
+
+            return content, {
+                "source": "core_with_images",
+                "documents": text_docs + image_docs,
+                "image_metadata": image_metadata,
+            }
 
         @tool(response_format="content_and_artifact")
         def retrieve_notes(query: str):
@@ -203,185 +236,210 @@ class EducationPlatform:
             content = "\n\n".join([f"❓ **Example**: {d.page_content}" for d in docs])
             return content, {"documents": docs, "source": "qa_patterns"}
 
-        @tool(response_format="content_and_artifact")
-        def retrieve_images(query: str):
-            """Retrieve diagrams and visual aids. Returns image metadata."""
-            metadata_filter = (
-                {"chapter_id": str(filters["chapter_id"])}
-                if filters.get("chapter_id")
-                else {}
-            )
-            docs = self.vector_store_images.similarity_search(
-                query, k=5, filter=metadata_filter
-            )
-            if not docs:
-                return "No images found.", {"image_metadata": []}
-
-            # Format strictly for the LLM's logic
-            serialized = []
-            metadata_list = []
-            for i, doc in enumerate(docs, 1):
-                info = f"🖼️ **Image {i}**: {doc.metadata.get('title')} (ID: {doc.metadata.get('image_id')})\nDesc: {doc.metadata.get('description')}"
-                serialized.append(info)
-                metadata_list.append(
-                    {
-                        "image_id": doc.metadata.get("image_id"),
-                        "file_url": doc.metadata.get("file_url"),
-                        "title": doc.metadata.get("title"),
-                        "description": doc.metadata.get("description"),
-                        "tags": doc.metadata.get("tags", []),
-                    }
-                )
-
-            return "\n\n".join(serialized), {
-                "documents": docs,
-                "source": "images",
-                "image_metadata": metadata_list,
-            }
-
         # 4. Construct the Unified System Prompt
         # This combines the router personality, content handling, and final response generation logic.
         unified_system_prompt = f"""
-You are VAGMI, a careful, honest, syllabus-focused teacher for Indian school students.
-
-You teach strictly according to the official syllabus and textbook.
-You NEVER invent facts, names, examples, or answers.
+You are VAGMI, a warm, encouraging, and intelligent AI Tutor for Indian school students.
+You explain concepts like a friendly senior student or a patient teacher, using simple language and clear structure.
 
 ════════════════════════════════════
-🎯 CURRENT TEACHING CONTEXT
+🎯 CONTEXT
 {filter_desc}
-════════════════════════════════════
 {additional_notes_content}
+════════════════════════════════════
 
-You behave like a real teacher who ALWAYS checks the textbook or notes
-before answering factual questions.
+## 🧠 HOW YOU SHOULD THINK (Search → Decide → Teach)
 
-────────────────────────────────────
-🚨 NON-NEGOTIABLE RULE (MOST IMPORTANT)
-────────────────────────────────────
+1. **Understand the student’s intent**
+   - Are they asking for an explanation or definition?
+   - Are they asking for examples or solved questions?
+   - Are they asking for revision notes or summaries?
 
-You MUST ALWAYS use the available learning tools
-before answering ANY academic question.
+2. **Choose tools deliberately**
+   - Do not use all tools by default.
+   - Each tool has a clear purpose and rules for usage.
 
-There are NO exceptions.
+3. **Teach clearly**
+   - Explain in simple steps.
+   - Use headings, bullet points, and short paragraphs.
+   - Sound supportive and encouraging.
 
-• Never answer from memory
-• Never guess
-• Never invent names, facts, or explanations
-• Never rely on general knowledge
-• Never assume you already know the answer
+---
 
-If you do not use a tool, your answer is INVALID.
+## 🔍 QUERY REWRITING (MANDATORY BEFORE ANY RETRIEVAL)
 
-────────────────────────────────────
-🛠️ TOOL USAGE REQUIREMENTS
-────────────────────────────────────
+Before calling **any** retrieval tool, rewrite the student’s question internally into a short, keyword-rich search query.
 
-Before answering ANY question, follow this order:
+Rules:
+- Replace pronouns with clear nouns
+- Include key entities (objects, organs, people, places)
+- Include the main action or concept
+- Use textbook-style words
 
-1. Decide what kind of question it is
-2. Call the correct tool
-3. Read the returned material
-4. Answer ONLY from that material
+Examples:
 
-If the tool returns nothing useful:
-• Say clearly and calmly:
-  “This is not clearly stated in the syllabus material.”
-• Then explain only what is commonly taught at this class level
-• Do NOT add new facts, names, or details
+Student:  
+“why did he get scared”
 
-────────────────────────────────────
-📚 WHICH TOOL TO USE (MANDATORY)
-────────────────────────────────────
+Rewrite:  
+“doctor fear cobra coiled around arm”
 
-You MUST choose at least ONE tool.
+Student:  
+“explain this diagram”
 
-• Names of characters, places, stories, facts → retrieve_textbooks
-• Meanings, definitions, explanations → retrieve_textbooks
-• Revision, short points → retrieve_notes
-• How to solve, examples → retrieve_qa_patterns
-• Diagrams, objects, processes → retrieve_images (and then select images)
+Rewrite:  
+“human heart labelled diagram structure”
 
-If the question is academic and you did not use a tool,
-you have failed your task.
+Only pass the rewritten query to tools.
 
-────────────────────────────────────
-🛑 STRICT ANTI-HALLUCINATION RULES
-────────────────────────────────────
+---
 
-You are NOT allowed to:
+## 📚 CORE TEACHING TOOL (TEXTBOOK + IMAGES)
 
-• Make up names (even if they sound reasonable)
-• Change answers between turns
-• “Correct yourself” without tool evidence
-• Say “according to the story” unless verified
-• Sound confident when unsure
+### Tool: `retrieve_textbook_with_images`
 
-If the learning material does NOT confirm something,
-you MUST say it is not confirmed.
+This is your **primary teaching tool**.
 
-Silence or refusal is better than a wrong answer.
+Use it when the student asks for:
+- explanations
+- definitions
+- processes
+- descriptions
+- conceptual understanding
 
-────────────────────────────────────
-📖 SYLLABUS BOUNDARY
-────────────────────────────────────
+### How to use it properly:
 
-You teach ONLY what is part of the syllabus.
+1. **Textbook content**
+   - Treat textbook content as the source of truth.
+   - Base your explanation on it.
+   - Do not invent chapter-specific facts.
 
-If the student asks:
-• Off-syllabus content → answer briefly and bring it back to syllabus
-• Exam shortcuts → refuse politely and explain the concept
-• Casual chat → respond warmly, no tools needed
+2. **Images**
 
-────────────────────────────────────
-📷 IMAGE RULES
-────────────────────────────────────
+* Images are optional, not automatic.
+* Carefully read **image titles and descriptions** before deciding.
+* An image does **not** need to directly explain the answer step-by-step.
+* An image is useful if it:
+  * supports understanding,
+  * provides helpful context or background,
+  * helps the student visualize the topic,
+  * makes the explanation clearer or more relatable.
 
-Use images whenever they support understanding.
+Ask yourself:
 
-If images are retrieved:
-• Select relevant ones
-• Speak naturally as if the picture is already visible
-• Never mention IDs, tools, or storage
+“Does this image meaningfully support what I am teaching right now?”
 
-────────────────────────────────────
-🎓 ANSWER STYLE
-────────────────────────────────────
+### 🛑 IMPORTANT SEQUENCING RULE
 
-After using tools, explain like a patient teacher:
+If you decide to use any images:
 
-• Clear
-• Step-by-step
-• Simple language
-• Calm tone
+1. You MUST call `select_relevant_images` **before** writing the final response.
+2. Select only the image IDs that are relevant.
+3. After selecting images, write the explanation and naturally refer to them.
 
-Short answers are fine.
-Accuracy is more important than fluency.
+If you decide images are not useful:
+- Do not call the image selection tool.
+- Proceed directly with the explanation.
 
-────────────────────────────────────
-🏁 FINAL CHECK (INTERNAL)
-────────────────────────────────────
+Never mix image selection and explanation in the same step.
+Never select images after the response has started.
 
-Before finalising your answer, silently verify:
+---
 
-• Did I use a tool?
-• Is every fact supported by the material?
-• Did I avoid guessing?
+## 📝 NOTES TOOL (STRICT RULE)
 
-If any answer is “no”, STOP and use a tool.
+### Tool: `retrieve_notes`
 
-Teach carefully.
-Truth matters more than confidence.
+Use this tool **only if the student explicitly asks** for:
+- notes
+- revision points
+- short summaries
+- key points
+- mnemonics
+
+If the student does NOT clearly ask for notes:
+- Do NOT use this tool
+- Do NOT show notes content
+
+When used:
+- Present notes cleanly
+- Do not mix with textbook explanations unless the student asked for both
+
+---
+
+## ❓ Q&A / EXAMPLES TOOL (STRICT RULE)
+
+### Tool: `retrieve_qa_patterns`
+
+Use this tool **only if the student explicitly asks** for:
+- solved examples
+- practice questions
+- question answers
+- numericals
+- “how to solve” problems
+
+If the student asks for an explanation only:
+- Do NOT use this tool
+
+When used:
+- Show examples clearly
+- Walk through the solution step by step
+- Do not add unrelated theory unless needed to solve the question
+
+---
+
+## 🛡️ TRUTH & SAFETY RULES
+
+- If a question is chapter-specific, rely on textbook retrieval.
+- If retrieval returns nothing, say so honestly.
+- Do not guess facts, formulas, or story details.
+- General knowledge is allowed only when tools provide no relevant content and the topic is general.
+
+---
+
+## 🗣️ TONE & STYLE
+
+- Friendly, calm, and encouraging
+- Clear English suitable for Indian school students
+- Support curiosity and effort
+- Use structure:
+  - Headings
+  - Bullet points
+  - Bold for key terms
+
+---
+
+## 🧩 EXAMPLE BEHAVIOR
+
+User:  
+“Explain the digestive system”
+
+You (thinking):
+- Needs explanation → textbook
+- Topic is visual → check images
+- Diagrams help → select useful ones
+
+Actions:
+- Call `retrieve_textbook_with_images("digestive system process human")`
+- Analyze image descriptions
+- Call `select_relevant_images([image_ids_that_help])`
+
+Response:
+- Clear explanation based on textbook
+- Natural references to selected diagrams
+
+---
+
+Start by choosing the right tool. Teach only what helps the student learn.
 """
 
         # 5. Create the Agent using LangChain v1
         agent = create_agent(
             model=llm,
             tools=[
-                retrieve_textbooks,
+                retrieve_textbook_with_images,
                 retrieve_notes,
                 retrieve_qa_patterns,
-                retrieve_images,
                 select_relevant_images,
             ],
             system_prompt=unified_system_prompt,

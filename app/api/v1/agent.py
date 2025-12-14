@@ -17,7 +17,6 @@ from loguru import logger
 
 router = APIRouter()
 platform = EducationPlatform()
-COLLECTION_NAME = "education_documents"
 
 
 async def get_hierarchy_names(
@@ -48,6 +47,7 @@ async def get_hierarchy_names(
             if chapter_id:
                 chapter = session.get(Chapter, chapter_id)
                 names["chapter"] = chapter.name if chapter else str(chapter_id)
+
         except Exception as e:
             logger.warning(f"Could not fetch hierarchy names: {e}")
 
@@ -56,12 +56,16 @@ async def get_hierarchy_names(
 
 @router.post("/stream-chat")
 async def stream_chat(
-    chat_request: ChatRequest, session: Session = Depends(get_session)
+    chat_request: ChatRequest,
+    session: Session = Depends(get_session),
 ):
-    """Stream chat responses with ID-based hierarchical filtering."""
+    """Stream chat responses with hierarchical filtering and image support."""
 
     async def generate_response():
         try:
+            # -----------------------------
+            # Prepare filters and context
+            # -----------------------------
             filters = {
                 "class_level_id": str(chat_request.class_level_id),
                 "board_id": str(chat_request.board_id),
@@ -98,10 +102,15 @@ async def stream_chat(
 
             input_messages = [{"role": "user", "content": chat_request.message}]
 
+            # -----------------------------
+            # Image state (per request)
+            # -----------------------------
             retrieved_images_metadata = []
-            selected_images = []
             images_streamed = False
 
+            # -----------------------------
+            # Stream events
+            # -----------------------------
             async for event in rag_graph.astream_events(
                 {"messages": input_messages, "query": chat_request.message},
                 config=config,
@@ -114,33 +123,39 @@ async def stream_chat(
                 name = event.get("name", "")
                 data = event.get("data", {})
 
-                if event_type == "on_tool_end":
-                    print(data)
-
-                # --- IMAGE RETRIEVAL ---
-                if event_type == "on_tool_end" and "retrieve_images" in name:
+                # -----------------------------
+                # IMAGE RETRIEVAL (merged tool)
+                # -----------------------------
+                if (
+                    event_type == "on_tool_end"
+                    and "retrieve_textbook_with_images" in name
+                ):
                     output = data.get("output")
+
                     if hasattr(output, "artifact") and output.artifact:
                         artifact = output.artifact
-                        if artifact.get("source") == "images":
-                            retrieved_images_metadata = artifact.get(
-                                "image_metadata", []
-                            )
 
-                # --- IMAGE SELECTION ---
+                        # RESET image state for this retrieval
+                        retrieved_images_metadata = artifact.get("image_metadata", [])
+                        images_streamed = False
+
+                # -----------------------------
+                # IMAGE SELECTION
+                # -----------------------------
                 elif event_type == "on_tool_end" and "select_relevant_images" in name:
                     output = data.get("output")
+
                     if hasattr(output, "artifact") and output.artifact:
                         artifact = output.artifact
+
                         if artifact.get("action") == "select_images":
                             selected_ids = artifact.get("selected_image_ids", [])
 
                             if not retrieved_images_metadata:
                                 continue
 
-                            selected_ids_str = [
-                                str(int(float(i))) for i in selected_ids
-                            ]
+                            selected_ids_str = {str(i) for i in selected_ids}
+
                             selected_images = [
                                 img
                                 for img in retrieved_images_metadata
@@ -152,9 +167,13 @@ async def stream_chat(
                                     yield (
                                         f"data: {json.dumps({'type': 'image', 'data': image})}\n\n"
                                     )
-                                images_streamed = True
 
-                # --- STREAM CLEAN TEXT ONLY ---
+                                images_streamed = True
+                                retrieved_images_metadata = []
+
+                # -----------------------------
+                # STREAM CLEAN TEXT TOKENS
+                # -----------------------------
                 elif event_type == "on_chat_model_stream":
                     chunk = data.get("chunk")
                     if not chunk:
@@ -166,11 +185,9 @@ async def stream_chat(
 
                     content = chunk.content
 
-                    # Plain string
                     if isinstance(content, str):
                         yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
-                    # Gemini structured content
                     elif isinstance(content, list):
                         for part in content:
                             if (
@@ -180,22 +197,24 @@ async def stream_chat(
                             ):
                                 yield f"data: {json.dumps({'type': 'token', 'content': part['text']})}\n\n"
 
-            # --- UPDATE CHECKPOINT WITH IMAGES ---
-            if selected_images:
-                try:
-                    state_snapshot = rag_graph.get_state(config)
-                    messages = state_snapshot.values.get("messages", [])
+            # -----------------------------
+            # Update checkpoint with images
+            # -----------------------------
+            try:
+                state_snapshot = rag_graph.get_state(config)
+                messages = state_snapshot.values.get("messages", [])
 
-                    for i in range(len(messages) - 1, -1, -1):
-                        if isinstance(messages[i], AIMessage):
-                            messages[i].additional_kwargs[
-                                "selected_images"
-                            ] = selected_images
-                            break
+                for i in range(len(messages) - 1, -1, -1):
+                    if isinstance(messages[i], AIMessage):
+                        messages[i].additional_kwargs[
+                            "selected_images"
+                        ] = selected_images
+                        break
 
-                    rag_graph.update_state(config, {"messages": messages})
-                except Exception as e:
-                    logger.error(f"Error updating checkpoint: {e}", exc_info=True)
+                rag_graph.update_state(config, {"messages": messages})
+
+            except Exception as e:
+                logger.error(f"Error updating checkpoint: {e}", exc_info=True)
 
             yield f"data: {json.dumps({'type': 'complete', 'content': ''})}\n\n"
 

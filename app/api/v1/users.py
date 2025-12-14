@@ -11,6 +11,7 @@ from .auth import get_current_user  # reuse your auth dependency
 
 router = APIRouter()
 
+
 class UserProfileUpdate(BaseModel):
     # Only allow updating fields that exist on the User model and are safe
     name: str | None = None
