@@ -8,7 +8,12 @@ from app.models.llm_resources import (
     LLMNote,
     QAPattern,
 )
-from app.models.student_content import StudentTextbook, StudentNotes, StudentVideo
+from app.models.student_content import (
+    StudentTextbook,
+    StudentNotes,
+    StudentVideo,
+    PreviousYearQuestionPaper,
+)
 
 
 # --------------------
@@ -104,6 +109,9 @@ class Subject(SubjectBase, BaseModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     medium: Medium = Relationship(back_populates="subjects")
     chapters: List["Chapter"] = Relationship(
+        back_populates="subject", cascade_delete=True
+    )
+    previous_year_question_papers: List["PreviousYearQuestionPaper"] = Relationship(
         back_populates="subject", cascade_delete=True
     )
 

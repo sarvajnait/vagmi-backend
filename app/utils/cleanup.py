@@ -12,6 +12,7 @@ from app.models import (
     StudentTextbook,
     StudentNotes,
     StudentVideo,
+    PreviousYearQuestionPaper,
     Chapter,
 )
 from app.core.agents.graph import (
@@ -270,6 +271,22 @@ def cleanup_subject_resources(session: Session, subject_id: int) -> dict:
     }
 
     try:
+        # Clean up subject-level resources
+        pyq_papers = session.exec(
+            select(PreviousYearQuestionPaper).where(
+                PreviousYearQuestionPaper.subject_id == subject_id
+            )
+        ).all()
+        for paper in pyq_papers:
+            if paper.file_url:
+                try:
+                    delete_from_do(paper.file_url)
+                    stats["total_files_deleted"] += 1
+                except Exception as e:
+                    stats["errors"].append(
+                        f"Error deleting previous year paper file {paper.file_url}: {e}"
+                    )
+
         # Get all chapters for this subject
         chapters = session.exec(
             select(Chapter).where(Chapter.subject_id == subject_id)

@@ -81,8 +81,9 @@ async def upload_textbook(
 ):
     """Upload a textbook to DigitalOcean and add to DB/vector store."""
     try:
+
         # Upload to DigitalOcean using utility
-        do_path = f"chapters/{chapter_id}/textbooks"
+        do_path = f"chapters/{chapter_id}/llm-resources/textbooks"
         file_url = upload_to_do(file, do_path)
 
         # Add textbook to DB
@@ -251,7 +252,7 @@ async def upload_image(
             quality=80,
         )
 
-        do_path = f"chapters/{chapter_id}/images"
+        do_path = f"chapters/{chapter_id}/llm-resources/images"
         file_url = upload_to_do(compressed_file, do_path)
 
         # Parse tags from comma-separated string
@@ -351,7 +352,9 @@ async def delete_image(image_id: int, session: Session = Depends(get_session)):
             deleted_count = delete_embeddings_by_resource_id(
                 session, image_id, COLLECTION_NAME_IMAGES, "image_id"
             )
-            logger.info(f"Deleted {deleted_count} embeddings from vector store: image_id={image_id}")
+            logger.info(
+                f"Deleted {deleted_count} embeddings from vector store: image_id={image_id}"
+            )
         except Exception as e:
             logger.error(f"Error deleting image from vector store: {e}")
             # Continue with deletion even if vector store cleanup fails
@@ -392,7 +395,7 @@ async def upload_llm_note(
 ):
     """Upload an LLM note PDF and store clean chunks for RAG."""
     try:
-        do_path = f"chapters/{chapter_id}/llm_notes"
+        do_path = f"chapters/{chapter_id}/llm-resources/llm_notes"
         file_url = upload_to_do(file, do_path)
 
         note = LLMNote(
@@ -524,7 +527,7 @@ async def upload_qa_pattern(
 ):
     """Upload Q&A pattern PDF with clean, reasoning-safe chunks."""
     try:
-        do_path = f"chapters/{chapter_id}/qa_patterns"
+        do_path = f"chapters/{chapter_id}/llm-resources/qa_patterns"
         file_url = upload_to_do(file, do_path)
 
         pattern = QAPattern(
