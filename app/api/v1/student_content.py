@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
 from loguru import logger
 from sqlmodel import Session
 from app.models import (
+    Chapter,
     StudentTextbook,
     StudentNotes,
     StudentVideo,
@@ -49,19 +50,69 @@ async def upload_textbook(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/textbook")
+@router.get(
+    "/textbook",
+    description=(
+        "List student textbooks grouped by chapter. "
+        "If subject_id is provided it takes priority over chapter_id and returns "
+        "all textbooks for all chapters in that subject. "
+        "If only chapter_id is provided, returns textbooks for that chapter."
+    ),
+)
 async def get_textbooks(
+    subject_id: Optional[int] = None,
     chapter_id: Optional[int] = None,
     session: Session = Depends(get_session),
 ):
-    """Get textbooks filtered by chapter."""
+    """Get textbooks grouped by chapter, filtered by subject or chapter."""
     try:
-        query = session.query(StudentTextbook)
-        if chapter_id is not None:
-            query = query.filter(StudentTextbook.chapter_id == chapter_id)
-        textbooks = query.all()
-        return {"data": [t.dict() for t in textbooks]}
+        chapters = []
+        if subject_id is not None:
+            subject = session.get(Subject, subject_id)
+            if not subject:
+                raise HTTPException(status_code=404, detail="Subject not found")
+            chapters = (
+                session.query(Chapter)
+                .filter(Chapter.subject_id == subject_id)
+                .all()
+            )
+            if not chapters:
+                return {"data": []}
+        elif chapter_id is not None:
+            chapter = session.get(Chapter, chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            chapters = [chapter]
+        else:
+            chapters = session.query(Chapter).all()
 
+        chapter_ids = [c.id for c in chapters]
+        textbooks_query = session.query(StudentTextbook)
+        if chapter_ids:
+            textbooks_query = textbooks_query.filter(
+                StudentTextbook.chapter_id.in_(chapter_ids)
+            )
+        textbooks = textbooks_query.all()
+
+        textbooks_by_chapter: dict[int, list[dict]] = {c.id: [] for c in chapters}
+        for textbook in textbooks:
+            textbooks_by_chapter.setdefault(textbook.chapter_id, []).append(
+                textbook.dict()
+            )
+
+        return {
+            "data": [
+                {
+                    "chapter_id": chapter.id,
+                    "chapter_name": chapter.name,
+                    "textbooks": textbooks_by_chapter.get(chapter.id, []),
+                }
+                for chapter in chapters
+            ]
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching textbooks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
