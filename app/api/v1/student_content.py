@@ -1,8 +1,10 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form, Query
+from pydantic import BaseModel
 from loguru import logger
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
+from sqlalchemy import func, case
 from app.models import (
     Chapter,
     StudentTextbook,
@@ -15,6 +17,18 @@ from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do
 
 router = APIRouter()
+
+
+class OrderUpdate(BaseModel):
+    ids: list[int]
+
+
+def sort_ordering(model):
+    return [
+        case((model.sort_order == None, 1), else_=0),
+        model.sort_order,
+        model.created_at,
+    ]
 
 
 # Textbook Endpoints
@@ -30,15 +44,26 @@ async def upload_textbook(
     """Upload a textbook directly to DigitalOcean and add to DB/vector store."""
     try:
 
-    
         do_path = f"chapters/{chapter_id}/student-content/textbooks"
         file_url = upload_to_do(file, do_path)
+
+        _result = await session.exec(
+            select(func.max(StudentTextbook.sort_order)).where(
+                StudentTextbook.chapter_id == chapter_id
+            )
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        next_order = (max_order or 0) + 1
 
         textbook = StudentTextbook(
             chapter_id=chapter_id,
             title=title or file.filename,
             description=description,
             file_url=file_url,
+            sort_order=next_order,
+            original_filename=file.filename,
         )
         session.add(textbook)
         await session.commit()
@@ -75,7 +100,8 @@ async def get_textbooks(
             if not subject:
                 raise HTTPException(status_code=404, detail="Subject not found")
             _result = await session.exec(
-                select(Chapter).where(Chapter.subject_id == subject_id))
+                select(Chapter).where(Chapter.subject_id == subject_id)
+            )
             chapters = _result.all()
             if not chapters:
                 return {"data": []}
@@ -94,6 +120,7 @@ async def get_textbooks(
             textbooks_query = textbooks_query.where(
                 StudentTextbook.chapter_id.in_(chapter_ids)
             )
+        textbooks_query = textbooks_query.order_by(*sort_ordering(StudentTextbook))
         _result = await session.exec(textbooks_query)
         textbooks = _result.all()
 
@@ -121,8 +148,39 @@ async def get_textbooks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/textbook/order")
+async def reorder_textbooks(
+    payload: OrderUpdate,
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update textbook order within a chapter."""
+    if len(payload.ids) != len(set(payload.ids)):
+        raise HTTPException(status_code=400, detail="Duplicate ids provided")
+
+    _result = await session.exec(
+        select(StudentTextbook).where(
+            StudentTextbook.chapter_id == chapter_id,
+            StudentTextbook.id.in_(payload.ids),
+        )
+    )
+    textbooks = _result.all()
+    if len(textbooks) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid textbook ids for chapter")
+
+    textbook_map = {t.id: t for t in textbooks}
+    for index, textbook_id in enumerate(payload.ids, start=1):
+        textbook_map[textbook_id].sort_order = index
+        session.add(textbook_map[textbook_id])
+
+    await session.commit()
+    return {"message": "Textbook order updated"}
+
+
 @router.delete("/textbook/{textbook_id}")
-async def delete_textbook(textbook_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_textbook(
+    textbook_id: int, session: AsyncSession = Depends(get_session)
+):
     """Delete a textbook from DB, vector store, and DigitalOcean Spaces."""
     try:
         textbook = await session.get(StudentTextbook, textbook_id)
@@ -178,6 +236,7 @@ async def update_textbook(
                 delete_from_do(textbook.file_url)
 
             textbook.file_url = new_file_url
+            textbook.original_filename = file.filename
             if title is None:
                 textbook.title = file.filename
 
@@ -212,11 +271,23 @@ async def upload_note(
         do_path = f"chapters/{chapter_id}/student-content/notes"
         file_url = upload_to_do(file, do_path)
 
+        _result = await session.exec(
+            select(func.max(StudentNotes.sort_order)).where(
+                StudentNotes.chapter_id == chapter_id
+            )
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        next_order = (max_order or 0) + 1
+
         note = StudentNotes(
             chapter_id=chapter_id,
             title=title,
             description=description,
             file_url=file_url,
+            sort_order=next_order,
+            original_filename=file.filename,
         )
         session.add(note)
         await session.commit()
@@ -239,6 +310,7 @@ async def get_notes(
         query = select(StudentNotes)
         if chapter_id is not None:
             query = query.where(StudentNotes.chapter_id == chapter_id)
+        query = query.order_by(*sort_ordering(StudentNotes))
         _result = await session.exec(query)
         notes = _result.all()
         return {"data": [n.dict() for n in notes]}
@@ -246,6 +318,35 @@ async def get_notes(
     except Exception as e:
         logger.error(f"Error fetching notes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/notes/order")
+async def reorder_notes(
+    payload: OrderUpdate,
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update notes order within a chapter."""
+    if len(payload.ids) != len(set(payload.ids)):
+        raise HTTPException(status_code=400, detail="Duplicate ids provided")
+
+    _result = await session.exec(
+        select(StudentNotes).where(
+            StudentNotes.chapter_id == chapter_id,
+            StudentNotes.id.in_(payload.ids),
+        )
+    )
+    notes = _result.all()
+    if len(notes) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid note ids for chapter")
+
+    note_map = {n.id: n for n in notes}
+    for index, note_id in enumerate(payload.ids, start=1):
+        note_map[note_id].sort_order = index
+        session.add(note_map[note_id])
+
+    await session.commit()
+    return {"message": "Note order updated"}
 
 
 @router.delete("/notes/{note_id}")
@@ -309,6 +410,7 @@ async def update_note(
                 delete_from_do(note.file_url)
 
             note.file_url = new_file_url
+            note.original_filename = file.filename
             if title is None:
                 note.title = file.filename
 
@@ -343,11 +445,23 @@ async def upload_video(
         do_path = f"chapters/{chapter_id}/student-content/videos"
         file_url = upload_to_do(file, do_path)
 
+        _result = await session.exec(
+            select(func.max(StudentVideo.sort_order)).where(
+                StudentVideo.chapter_id == chapter_id
+            )
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        next_order = (max_order or 0) + 1
+
         video = StudentVideo(
             chapter_id=chapter_id,
             title=title,
             description=description,
             file_url=file_url,
+            sort_order=next_order,
+            original_filename=file.filename,
         )
         session.add(video)
         await session.commit()
@@ -370,6 +484,7 @@ async def get_videos(
         query = select(StudentVideo)
         if chapter_id is not None:
             query = query.where(StudentVideo.chapter_id == chapter_id)
+        query = query.order_by(*sort_ordering(StudentVideo))
         _result = await session.exec(query)
         videos = _result.all()
         return {"data": [v.dict() for v in videos]}
@@ -377,6 +492,35 @@ async def get_videos(
     except Exception as e:
         logger.error(f"Error fetching videos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/videos/order")
+async def reorder_videos(
+    payload: OrderUpdate,
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update video order within a chapter."""
+    if len(payload.ids) != len(set(payload.ids)):
+        raise HTTPException(status_code=400, detail="Duplicate ids provided")
+
+    _result = await session.exec(
+        select(StudentVideo).where(
+            StudentVideo.chapter_id == chapter_id,
+            StudentVideo.id.in_(payload.ids),
+        )
+    )
+    videos = _result.all()
+    if len(videos) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid video ids for chapter")
+
+    video_map = {v.id: v for v in videos}
+    for index, video_id in enumerate(payload.ids, start=1):
+        video_map[video_id].sort_order = index
+        session.add(video_map[video_id])
+
+    await session.commit()
+    return {"message": "Video order updated"}
 
 
 @router.delete("/videos/{video_id}")
@@ -440,6 +584,7 @@ async def update_video(
                 delete_from_do(video.file_url)
 
             video.file_url = new_file_url
+            video.original_filename = file.filename
             if title is None:
                 video.title = file.filename
 
@@ -478,6 +623,16 @@ async def upload_previous_year_question_paper(
         do_path = f"subjects/{subject_id}/student-content/previous-year-question-papers"
         file_url = upload_to_do(file, do_path)
 
+        _result = await session.exec(
+            select(func.max(PreviousYearQuestionPaper.sort_order)).where(
+                PreviousYearQuestionPaper.subject_id == subject_id
+            )
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        next_order = (max_order or 0) + 1
+
         paper = PreviousYearQuestionPaper(
             subject_id=subject_id,
             title=title,
@@ -485,6 +640,8 @@ async def upload_previous_year_question_paper(
             file_url=file_url,
             is_premium=is_premium,
             enabled=enabled,
+            sort_order=next_order,
+            original_filename=file.filename,
         )
         session.add(paper)
         await session.commit()
@@ -513,6 +670,7 @@ async def get_previous_year_question_papers(
         query = select(PreviousYearQuestionPaper)
         if subject_id is not None:
             query = query.where(PreviousYearQuestionPaper.subject_id == subject_id)
+        query = query.order_by(*sort_ordering(PreviousYearQuestionPaper))
         _result = await session.exec(query)
         papers = _result.all()
         return {"data": [p.dict() for p in papers]}
@@ -520,6 +678,35 @@ async def get_previous_year_question_papers(
     except Exception as e:
         logger.error(f"Error fetching previous year papers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/previous-year-question-papers/order")
+async def reorder_previous_year_question_papers(
+    payload: OrderUpdate,
+    subject_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update previous year question paper order within a subject."""
+    if len(payload.ids) != len(set(payload.ids)):
+        raise HTTPException(status_code=400, detail="Duplicate ids provided")
+
+    _result = await session.exec(
+        select(PreviousYearQuestionPaper).where(
+            PreviousYearQuestionPaper.subject_id == subject_id,
+            PreviousYearQuestionPaper.id.in_(payload.ids),
+        )
+    )
+    papers = _result.all()
+    if len(papers) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid paper ids for subject")
+
+    paper_map = {p.id: p for p in papers}
+    for index, paper_id in enumerate(payload.ids, start=1):
+        paper_map[paper_id].sort_order = index
+        session.add(paper_map[paper_id])
+
+    await session.commit()
+    return {"message": "Previous year paper order updated"}
 
 
 @router.get("/previous-year-question-papers/{paper_id}")
@@ -587,6 +774,7 @@ async def update_previous_year_question_paper(
                     )
 
             paper.file_url = new_file_url
+            paper.original_filename = file.filename
 
         session.add(paper)
         await session.commit()
@@ -619,9 +807,7 @@ async def delete_previous_year_question_paper(
             try:
                 delete_from_do(paper.file_url)
             except Exception as e:
-                logger.error(
-                    f"Error deleting previous year paper file from DO: {e}"
-                )
+                logger.error(f"Error deleting previous year paper file from DO: {e}")
                 raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
 
         await session.delete(paper)

@@ -14,6 +14,8 @@ class StudentTextbookBase(SQLModel):
     title: str
     description: Optional[str] = None
     file_url: str
+    sort_order: Optional[int] = Field(default=None)
+    original_filename: Optional[str] = None
 
 
 class StudentTextbook(StudentTextbookBase, BaseModel, table=True):
@@ -39,6 +41,8 @@ class StudentNotesBase(SQLModel):
     title: str
     description: Optional[str] = None
     file_url: str
+    sort_order: Optional[int] = Field(default=None)
+    original_filename: Optional[str] = None
 
 
 class StudentNotes(StudentNotesBase, BaseModel, table=True):
@@ -61,6 +65,8 @@ class StudentVideoBase(SQLModel):
     title: str
     description: Optional[str] = None
     file_url: str
+    sort_order: Optional[int] = Field(default=None)
+    original_filename: Optional[str] = None
 
 
 class StudentVideo(StudentVideoBase, BaseModel, table=True):
@@ -88,6 +94,8 @@ class PreviousYearQuestionPaperBase(SQLModel):
     file_url: str
     is_premium: bool = Field(default=False)
     enabled: bool = Field(default=True)
+    sort_order: Optional[int] = Field(default=None)
+    original_filename: Optional[str] = None
 
 
 class PreviousYearQuestionPaper(

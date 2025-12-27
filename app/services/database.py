@@ -48,13 +48,6 @@ async def force_drop_all_tables(schema: str = "public"):
         print("All tables dropped successfully.")
 
 
-async def create_db_and_tables() -> None:
-    """Create all tables based on SQLModel metadata."""
-    # async with engine.begin() as conn:
-    #     await conn.run_sync(SQLModel.metadata.create_all)
-    logger.info("Database tables created successfully")
-
-
 async def get_session():
     async with async_session_maker() as session:
         yield session

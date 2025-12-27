@@ -15,6 +15,8 @@ class LLMTextbookBase(SQLModel):
     title: str
     description: Optional[str] = None
     file_url: str
+    sort_order: Optional[int] = Field(default=None)
+    original_filename: Optional[str] = None
 
 
 class LLMTextbook(LLMTextbookBase, BaseModel, table=True):
@@ -38,6 +40,7 @@ class LLMTextbookRead(LLMTextbookBase):
 class AdditionalNotesBase(SQLModel):
     chapter_id: int = Field(foreign_key="chapters.id")
     note: str
+    sort_order: Optional[int] = Field(default=None)
 
 
 class AdditionalNotes(AdditionalNotesBase, BaseModel, table=True):
@@ -64,6 +67,8 @@ class LLMImageBase(SQLModel):
     description: Optional[str] = None
     file_url: str
     tags: Optional[list[str]] = Field(default=None, sa_column=Column(ARRAY(String)))
+    sort_order: Optional[int] = Field(default=None)
+    original_filename: Optional[str] = None
 
 
 class LLMImage(LLMImageBase, BaseModel, table=True):
@@ -89,6 +94,8 @@ class LLMNoteBase(SQLModel):
     title: str
     description: Optional[str] = None
     file_url: str
+    sort_order: Optional[int] = Field(default=None)
+    original_filename: Optional[str] = None
 
 
 class LLMNote(LLMNoteBase, BaseModel, table=True):
@@ -114,6 +121,8 @@ class QAPatternBase(SQLModel):
     title: str
     description: Optional[str] = None
     file_url: str
+    sort_order: Optional[int] = Field(default=None)
+    original_filename: Optional[str] = None
 
 
 class QAPattern(QAPatternBase, BaseModel, table=True):

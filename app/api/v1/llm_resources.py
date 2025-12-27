@@ -1,8 +1,10 @@
 from typing import Dict, Optional
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form, Query
+from pydantic import BaseModel
 from loguru import logger
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
+from sqlalchemy import func, case
 from app.models import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern, Chapter
 from app.services.database import get_session
 from app.core.agents.graph import EducationPlatform
@@ -21,6 +23,18 @@ COLLECTION_NAME_NOTES = "llm_notes"
 COLLECTION_NAME_QA = "qa_patterns"
 COLLECTION_NAME_IMAGES = "llm_images"
 COLLECTION_NAME = COLLECTION_NAME_TEXTBOOKS  # For backwards compatibility
+
+
+class OrderUpdate(BaseModel):
+    ids: list[int]
+
+
+def sort_ordering(model):
+    return [
+        case((model.sort_order == None, 1), else_=0),
+        model.sort_order,
+        model.created_at,
+    ]
 
 
 # ============================================================
@@ -126,12 +140,24 @@ async def upload_textbook(
         do_path = f"chapters/{chapter_id}/llm-resources/textbooks"
         file_url = upload_to_do(file, do_path)
 
+        _result = await session.exec(
+            select(func.max(LLMTextbook.sort_order)).where(
+                LLMTextbook.chapter_id == chapter_id
+            )
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        next_order = (max_order or 0) + 1
+
         # Add textbook to DB
         textbook = LLMTextbook(
             chapter_id=chapter_id,
             title=title or file.filename,
             description=description,
             file_url=file_url,
+            sort_order=next_order,
+            original_filename=file.filename,
         )
         session.add(textbook)
         await session.commit()
@@ -139,7 +165,7 @@ async def upload_textbook(
 
         metadata = {
             "chapter_id": chapter_id,
-            "source_file": file.filename,
+            "source_file": textbook.original_filename or textbook.title,
             "file_url": file_url,
             "textbook_id": textbook.id,
         }
@@ -167,6 +193,7 @@ async def get_textbooks(
         query = select(LLMTextbook)
         if chapter_id is not None:
             query = query.where(LLMTextbook.chapter_id == chapter_id)
+        query = query.order_by(*sort_ordering(LLMTextbook))
         _result = await session.exec(query)
         textbooks = _result.all()
         return {"data": [t.dict() for t in textbooks]}
@@ -174,6 +201,35 @@ async def get_textbooks(
     except Exception as e:
         logger.error(f"Error fetching textbooks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/textbook/order")
+async def reorder_textbooks(
+    payload: OrderUpdate,
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update textbook order within a chapter."""
+    if len(payload.ids) != len(set(payload.ids)):
+        raise HTTPException(status_code=400, detail="Duplicate ids provided")
+
+    _result = await session.exec(
+        select(LLMTextbook).where(
+            LLMTextbook.chapter_id == chapter_id,
+            LLMTextbook.id.in_(payload.ids),
+        )
+    )
+    textbooks = _result.all()
+    if len(textbooks) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid textbook ids for chapter")
+
+    textbook_map = {t.id: t for t in textbooks}
+    for index, textbook_id in enumerate(payload.ids, start=1):
+        textbook_map[textbook_id].sort_order = index
+        session.add(textbook_map[textbook_id])
+
+    await session.commit()
+    return {"message": "Textbook order updated"}
 
 
 @router.delete("/textbook/{textbook_id}")
@@ -251,6 +307,7 @@ async def update_textbook(
                 delete_from_do(textbook.file_url)
 
             textbook.file_url = new_file_url
+            textbook.original_filename = file.filename
             if title is None:
                 textbook.title = file.filename
             should_reindex = True
@@ -261,7 +318,7 @@ async def update_textbook(
             )
             metadata = {
                 "chapter_id": textbook.chapter_id,
-                "source_file": textbook.title,
+                "source_file": textbook.original_filename or textbook.title,
                 "file_url": textbook.file_url,
                 "textbook_id": textbook.id,
             }
@@ -280,6 +337,8 @@ async def update_textbook(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+
 # ============================================================
 # LLM Notes Endpoints
 # ============================================================
@@ -291,7 +350,21 @@ async def create_additional_note(
 ):
     """Create a new additional note for a chapter."""
     try:
-        additional_note = AdditionalNotes(chapter_id=chapter_id, note=note)
+        _result = await session.exec(
+            select(func.max(AdditionalNotes.sort_order)).where(
+                AdditionalNotes.chapter_id == chapter_id
+            )
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        next_order = (max_order or 0) + 1
+
+        additional_note = AdditionalNotes(
+            chapter_id=chapter_id,
+            note=note,
+            sort_order=next_order,
+        )
         session.add(additional_note)
         await session.commit()
         await session.refresh(additional_note)
@@ -312,6 +385,7 @@ async def get_additional_notes(
         query = select(AdditionalNotes)
         if chapter_id is not None:
             query = query.where(AdditionalNotes.chapter_id == chapter_id)
+        query = query.order_by(*sort_ordering(AdditionalNotes))
         _result = await session.exec(query)
         notes = _result.all()
         return {"data": [n.dict() for n in notes]}
@@ -319,6 +393,35 @@ async def get_additional_notes(
     except Exception as e:
         logger.error(f"Error fetching notes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/additional-notes/order")
+async def reorder_additional_notes(
+    payload: OrderUpdate,
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update additional notes order within a chapter."""
+    if len(payload.ids) != len(set(payload.ids)):
+        raise HTTPException(status_code=400, detail="Duplicate ids provided")
+
+    _result = await session.exec(
+        select(AdditionalNotes).where(
+            AdditionalNotes.chapter_id == chapter_id,
+            AdditionalNotes.id.in_(payload.ids),
+        )
+    )
+    notes = _result.all()
+    if len(notes) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid note ids for chapter")
+
+    note_map = {n.id: n for n in notes}
+    for index, note_id in enumerate(payload.ids, start=1):
+        note_map[note_id].sort_order = index
+        session.add(note_map[note_id])
+
+    await session.commit()
+    return {"message": "Note order updated"}
 
 
 @router.delete("/additional-notes/{note_id}")
@@ -372,6 +475,8 @@ async def update_additional_note(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+
 # ============================================================
 # LLM Image Endpoints
 # ============================================================
@@ -402,6 +507,16 @@ async def upload_image(
         tags_list = parse_tags(tags)
         image_title = title or file.filename
 
+        _result = await session.exec(
+            select(func.max(LLMImage.sort_order)).where(
+                LLMImage.chapter_id == chapter_id
+            )
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        next_order = (max_order or 0) + 1
+
         # Add image to DB
         image = LLMImage(
             chapter_id=chapter_id,
@@ -409,6 +524,8 @@ async def upload_image(
             description=description,
             file_url=file_url,
             tags=tags_list,
+            sort_order=next_order,
+            original_filename=file.filename,
         )
         session.add(image)
         await session.commit()
@@ -455,6 +572,7 @@ async def get_images(
         query = select(LLMImage)
         if chapter_id is not None:
             query = query.where(LLMImage.chapter_id == chapter_id)
+        query = query.order_by(*sort_ordering(LLMImage))
         _result = await session.exec(query)
         images = _result.all()
         return {"data": [img.dict() for img in images]}
@@ -462,6 +580,35 @@ async def get_images(
     except Exception as e:
         logger.error(f"Error fetching images: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/image/order")
+async def reorder_images(
+    payload: OrderUpdate,
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update image order within a chapter."""
+    if len(payload.ids) != len(set(payload.ids)):
+        raise HTTPException(status_code=400, detail="Duplicate ids provided")
+
+    _result = await session.exec(
+        select(LLMImage).where(
+            LLMImage.chapter_id == chapter_id,
+            LLMImage.id.in_(payload.ids),
+        )
+    )
+    images = _result.all()
+    if len(images) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid image ids for chapter")
+
+    image_map = {img.id: img for img in images}
+    for index, image_id in enumerate(payload.ids, start=1):
+        image_map[image_id].sort_order = index
+        session.add(image_map[image_id])
+
+    await session.commit()
+    return {"message": "Image order updated"}
 
 
 @router.delete("/image/{image_id}")
@@ -557,6 +704,7 @@ async def update_image(
                 delete_from_do(image.file_url)
 
             image.file_url = new_file_url
+            image.original_filename = file.filename
             if title is None:
                 image.title = file.filename
             should_reindex = True
@@ -598,6 +746,8 @@ async def update_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+
 # ============================================================
 # LLM Note Endpoints (PDF-based, for RAG)
 # ============================================================
@@ -614,11 +764,23 @@ async def upload_llm_note(
         do_path = f"chapters/{chapter_id}/llm-resources/llm_notes"
         file_url = upload_to_do(file, do_path)
 
+        _result = await session.exec(
+            select(func.max(LLMNote.sort_order)).where(
+                LLMNote.chapter_id == chapter_id
+            )
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        next_order = (max_order or 0) + 1
+
         note = LLMNote(
             chapter_id=chapter_id,
             title=title or file.filename,
             description=description,
             file_url=file_url,
+            sort_order=next_order,
+            original_filename=file.filename,
         )
         session.add(note)
         await session.commit()
@@ -650,7 +812,7 @@ async def upload_llm_note(
             doc.metadata.update(
                 {
                     "chapter_id": str(chapter_id),
-                    "source_file": file.filename,
+                    "source_file": note.original_filename or note.title,
                     "file_url": file_url,
                     "note_id": str(note.id),
                     "content_type": "llm_note",
@@ -685,6 +847,7 @@ async def get_llm_notes(
         query = select(LLMNote)
         if chapter_id is not None:
             query = query.where(LLMNote.chapter_id == chapter_id)
+        query = query.order_by(*sort_ordering(LLMNote))
         _result = await session.exec(query)
         notes = _result.all()
         return {"data": [note.dict() for note in notes]}
@@ -692,6 +855,35 @@ async def get_llm_notes(
     except Exception as e:
         logger.error(f"Error fetching LLM notes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/llm-note/order")
+async def reorder_llm_notes(
+    payload: OrderUpdate,
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update LLM note order within a chapter."""
+    if len(payload.ids) != len(set(payload.ids)):
+        raise HTTPException(status_code=400, detail="Duplicate ids provided")
+
+    _result = await session.exec(
+        select(LLMNote).where(
+            LLMNote.chapter_id == chapter_id,
+            LLMNote.id.in_(payload.ids),
+        )
+    )
+    notes = _result.all()
+    if len(notes) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid note ids for chapter")
+
+    note_map = {n.id: n for n in notes}
+    for index, note_id in enumerate(payload.ids, start=1):
+        note_map[note_id].sort_order = index
+        session.add(note_map[note_id])
+
+    await session.commit()
+    return {"message": "LLM note order updated"}
 
 
 @router.delete("/llm-note/{note_id}")
@@ -768,6 +960,7 @@ async def update_llm_note(
                 delete_from_do(note.file_url)
 
             note.file_url = new_file_url
+            note.original_filename = file.filename
             if title is None:
                 note.title = file.filename
             should_reindex = True
@@ -794,7 +987,7 @@ async def update_llm_note(
                     doc.metadata.update(
                         {
                             "chapter_id": str(note.chapter_id),
-                            "source_file": note.title,
+                            "source_file": note.original_filename or note.title,
                             "file_url": note.file_url,
                             "note_id": str(note.id),
                             "content_type": "llm_note",
@@ -818,6 +1011,8 @@ async def update_llm_note(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+
 # ============================================================
 # Q&A Pattern Endpoints (PDF-based, for RAG)
 # ============================================================
@@ -834,11 +1029,23 @@ async def upload_qa_pattern(
         do_path = f"chapters/{chapter_id}/llm-resources/qa_patterns"
         file_url = upload_to_do(file, do_path)
 
+        _result = await session.exec(
+            select(func.max(QAPattern.sort_order)).where(
+                QAPattern.chapter_id == chapter_id
+            )
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        next_order = (max_order or 0) + 1
+
         pattern = QAPattern(
             chapter_id=chapter_id,
             title=title or file.filename,
             description=description,
             file_url=file_url,
+            sort_order=next_order,
+            original_filename=file.filename,
         )
         session.add(pattern)
         await session.commit()
@@ -880,7 +1087,7 @@ async def upload_qa_pattern(
             doc.metadata.update(
                 {
                     "chapter_id": str(chapter_id),
-                    "source_file": file.filename,
+                    "source_file": pattern.original_filename or pattern.title,
                     "file_url": file_url,
                     "pattern_id": str(pattern.id),
                     "content_type": "qa_pattern",
@@ -915,6 +1122,7 @@ async def get_qa_patterns(
         query = select(QAPattern)
         if chapter_id is not None:
             query = query.where(QAPattern.chapter_id == chapter_id)
+        query = query.order_by(*sort_ordering(QAPattern))
         _result = await session.exec(query)
         patterns = _result.all()
         return {"data": [pattern.dict() for pattern in patterns]}
@@ -922,6 +1130,35 @@ async def get_qa_patterns(
     except Exception as e:
         logger.error(f"Error fetching Q&A patterns: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/qa-pattern/order")
+async def reorder_qa_patterns(
+    payload: OrderUpdate,
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update Q&A pattern order within a chapter."""
+    if len(payload.ids) != len(set(payload.ids)):
+        raise HTTPException(status_code=400, detail="Duplicate ids provided")
+
+    _result = await session.exec(
+        select(QAPattern).where(
+            QAPattern.chapter_id == chapter_id,
+            QAPattern.id.in_(payload.ids),
+        )
+    )
+    patterns = _result.all()
+    if len(patterns) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid pattern ids for chapter")
+
+    pattern_map = {p.id: p for p in patterns}
+    for index, pattern_id in enumerate(payload.ids, start=1):
+        pattern_map[pattern_id].sort_order = index
+        session.add(pattern_map[pattern_id])
+
+    await session.commit()
+    return {"message": "Q&A pattern order updated"}
 
 
 @router.delete("/qa-pattern/{pattern_id}")
@@ -998,6 +1235,7 @@ async def update_qa_pattern(
                 delete_from_do(pattern.file_url)
 
             pattern.file_url = new_file_url
+            pattern.original_filename = file.filename
             if title is None:
                 pattern.title = file.filename
             should_reindex = True
@@ -1034,7 +1272,7 @@ async def update_qa_pattern(
                     doc.metadata.update(
                         {
                             "chapter_id": str(pattern.chapter_id),
-                            "source_file": pattern.title,
+                            "source_file": pattern.original_filename or pattern.title,
                             "file_url": pattern.file_url,
                             "pattern_id": str(pattern.id),
                             "content_type": "qa_pattern",
@@ -1056,3 +1294,4 @@ async def update_qa_pattern(
     except Exception as e:
         logger.error(f"Error updating Q&A pattern: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+

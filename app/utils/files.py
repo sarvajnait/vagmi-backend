@@ -1,4 +1,6 @@
 import os
+import re
+import uuid
 from fastapi import UploadFile, HTTPException
 from starlette.datastructures import Headers
 import boto3
@@ -11,6 +13,14 @@ DO_BUCKET = "vagmi"
 DO_ENDPOINT = f"https://{DO_REGION}.digitaloceanspaces.com"
 ACCESS_KEY = os.getenv("DO_SPACES_ACCESS_KEY")
 SECRET_KEY = os.getenv("DO_SPACES_SECRET_KEY")
+
+
+def _safe_filename(filename: str) -> str:
+    if not filename:
+        return "file"
+    name = filename.strip().replace("\\", "_").replace("/", "_")
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    return name or "file"
 
 
 def upload_to_do(file: UploadFile, path: str) -> str:
@@ -26,7 +36,8 @@ def upload_to_do(file: UploadFile, path: str) -> str:
         aws_secret_access_key=SECRET_KEY,
     )
 
-    object_key = f"{path}/{file.filename}"
+    safe_name = _safe_filename(file.filename)
+    object_key = f"{path}/{uuid.uuid4().hex}_{safe_name}"
 
     try:
         s3_client.upload_fileobj(
