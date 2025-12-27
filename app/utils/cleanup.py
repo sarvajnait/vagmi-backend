@@ -29,13 +29,13 @@ async def delete_embeddings_by_chapter_id(
 ) -> int:
     """
     Delete embeddings from a collection by chapter_id.
-    
+
     Args:
         session: Database session
         chapter_id: Chapter ID to filter by
         collection_name: Name of the collection
         metadata_key: Metadata key to filter by (e.g., 'textbook_id', 'note_id', 'image_id', 'pattern_id')
-    
+
     Returns:
         Number of embeddings deleted
     """
@@ -72,13 +72,13 @@ async def delete_embeddings_by_resource_id(
 ) -> int:
     """
     Delete embeddings from a collection by resource ID (textbook_id, note_id, etc.).
-    
+
     Args:
         session: Database session
         resource_id: Resource ID to filter by
         collection_name: Name of the collection
         metadata_key: Metadata key to filter by (e.g., 'textbook_id', 'note_id', 'image_id', 'pattern_id')
-    
+
     Returns:
         Number of embeddings deleted
     """
@@ -112,7 +112,7 @@ async def delete_embeddings_by_resource_id(
 async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> dict:
     """
     Clean up all resources (files and embeddings) for a chapter.
-    
+
     This includes:
     - LLM Textbooks (files + embeddings)
     - LLM Images (files + embeddings)
@@ -122,11 +122,11 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
     - Student Textbooks (files only)
     - Student Notes (files only)
     - Student Videos (files only)
-    
+
     Args:
         session: Database session
         chapter_id: Chapter ID to clean up
-    
+
     Returns:
         Dictionary with cleanup statistics
     """
@@ -173,7 +173,9 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
                     delete_from_do(textbook.file_url)
                     stats["files_deleted"] += 1
                 except Exception as e:
-                    stats["errors"].append(f"Error deleting textbook file {textbook.file_url}: {e}")
+                    stats["errors"].append(
+                        f"Error deleting textbook file {textbook.file_url}: {e}"
+                    )
             # Embeddings will be deleted by chapter_id below
 
         # Delete LLM Image files and embeddings
@@ -183,7 +185,9 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
                     delete_from_do(image.file_url)
                     stats["files_deleted"] += 1
                 except Exception as e:
-                    stats["errors"].append(f"Error deleting image file {image.file_url}: {e}")
+                    stats["errors"].append(
+                        f"Error deleting image file {image.file_url}: {e}"
+                    )
             # Embeddings will be deleted by chapter_id below
 
         # Delete LLM Note files and embeddings
@@ -193,7 +197,9 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
                     delete_from_do(note.file_url)
                     stats["files_deleted"] += 1
                 except Exception as e:
-                    stats["errors"].append(f"Error deleting note file {note.file_url}: {e}")
+                    stats["errors"].append(
+                        f"Error deleting note file {note.file_url}: {e}"
+                    )
             # Embeddings will be deleted by chapter_id below
 
         # Delete Q&A Pattern files and embeddings
@@ -203,7 +209,9 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
                     delete_from_do(pattern.file_url)
                     stats["files_deleted"] += 1
                 except Exception as e:
-                    stats["errors"].append(f"Error deleting pattern file {pattern.file_url}: {e}")
+                    stats["errors"].append(
+                        f"Error deleting pattern file {pattern.file_url}: {e}"
+                    )
             # Embeddings will be deleted by chapter_id below
 
         # Delete Student Textbook files
@@ -213,7 +221,9 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
                     delete_from_do(textbook.file_url)
                     stats["files_deleted"] += 1
                 except Exception as e:
-                    stats["errors"].append(f"Error deleting student textbook file {textbook.file_url}: {e}")
+                    stats["errors"].append(
+                        f"Error deleting student textbook file {textbook.file_url}: {e}"
+                    )
 
         # Delete Student Note files
         for note in student_notes:
@@ -222,7 +232,9 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
                     delete_from_do(note.file_url)
                     stats["files_deleted"] += 1
                 except Exception as e:
-                    stats["errors"].append(f"Error deleting student note file {note.file_url}: {e}")
+                    stats["errors"].append(
+                        f"Error deleting student note file {note.file_url}: {e}"
+                    )
 
         # Delete Student Video files
         for video in student_videos:
@@ -231,7 +243,9 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
                     delete_from_do(video.file_url)
                     stats["files_deleted"] += 1
                 except Exception as e:
-                    stats["errors"].append(f"Error deleting student video file {video.file_url}: {e}")
+                    stats["errors"].append(
+                        f"Error deleting student video file {video.file_url}: {e}"
+                    )
 
         # Delete all embeddings by chapter_id from all collections
         stats["embeddings_deleted"] += await delete_embeddings_by_chapter_id(
@@ -262,11 +276,11 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
 async def cleanup_subject_resources(session: AsyncSession, subject_id: int) -> dict:
     """
     Clean up all resources for all chapters in a subject.
-    
+
     Args:
         session: Database session
         subject_id: Subject ID to clean up
-    
+
     Returns:
         Dictionary with cleanup statistics
     """
@@ -282,7 +296,8 @@ async def cleanup_subject_resources(session: AsyncSession, subject_id: int) -> d
         _result = await session.exec(
             select(PreviousYearQuestionPaper).where(
                 PreviousYearQuestionPaper.subject_id == subject_id
-            ))
+            )
+        )
         pyq_papers = _result.all()
         for paper in pyq_papers:
             if paper.file_url:
@@ -296,7 +311,8 @@ async def cleanup_subject_resources(session: AsyncSession, subject_id: int) -> d
 
         # Get all chapters for this subject
         _result = await session.exec(
-            select(Chapter).where(Chapter.subject_id == subject_id))
+            select(Chapter).where(Chapter.subject_id == subject_id)
+        )
         chapters = _result.all()
         for chapter in chapters:
             chapter_stats = await cleanup_chapter_resources(session, chapter.id)
@@ -317,4 +333,3 @@ async def cleanup_subject_resources(session: AsyncSession, subject_id: int) -> d
         stats["errors"].append(f"Cleanup error: {e}")
 
     return stats
-

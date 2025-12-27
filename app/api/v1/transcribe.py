@@ -10,7 +10,7 @@ router = APIRouter()
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     verbose=False,
-    temperature=0.5,
+    temperature=0.1,
     streaming=True,
 )
 

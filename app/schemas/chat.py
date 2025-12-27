@@ -48,17 +48,10 @@ class ChatRequest(BaseModel):
 
     Attributes:
         message: The student's question or message
-        class_level_id: ID of the student's class level
-        board_id: ID of the educational board (CBSE, ICSE, etc.)
-        medium_id: ID of the medium of instruction
         subject_id: ID of the subject being discussed
         chapter_id: Optional ID of the specific chapter (for chapter-specific queries)
     """
 
     message: str
-    user_id: Optional[int] = None
-    class_level_id: int
-    board_id: int
-    medium_id: int
     subject_id: int
     chapter_id: Optional[int] = None

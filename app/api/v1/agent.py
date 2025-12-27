@@ -66,9 +66,35 @@ async def stream_chat(
     session: AsyncSession = Depends(get_session),
 ):
     """Stream chat responses with hierarchical filtering and image support."""
-    if chat_request.user_id is not None and chat_request.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="user_id does not match token")
     user_id = current_user.id
+    subject = await session.get(Subject, chat_request.subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    chapter = None
+    if chat_request.chapter_id is not None:
+        chapter = await session.get(Chapter, chat_request.chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+        if chapter.subject_id != subject.id:
+            raise HTTPException(status_code=400, detail="Chapter does not belong to subject")
+
+    medium = await session.get(Medium, subject.medium_id)
+    if not medium:
+        raise HTTPException(status_code=404, detail="Medium not found")
+    board = await session.get(Board, medium.board_id)
+    if not board:
+        raise HTTPException(status_code=404, detail="Board not found")
+    class_level = await session.get(ClassLevel, board.class_level_id)
+    if not class_level:
+        raise HTTPException(status_code=404, detail="Class level not found")
+
+    if current_user.class_level_id and current_user.class_level_id != class_level.id:
+        raise HTTPException(status_code=403, detail="User class level does not match subject")
+    if current_user.board_id and current_user.board_id != board.id:
+        raise HTTPException(status_code=403, detail="User board does not match subject")
+    if current_user.medium_id and current_user.medium_id != medium.id:
+        raise HTTPException(status_code=403, detail="User medium does not match subject")
 
     async def generate_response():
         try:
@@ -83,31 +109,31 @@ async def stream_chat(
             # Prepare filters and context
             # -----------------------------
             filters = {
-                "class_level_id": str(chat_request.class_level_id),
-                "board_id": str(chat_request.board_id),
-                "medium_id": str(chat_request.medium_id),
-                "subject_id": str(chat_request.subject_id),
+                "class_level_id": str(class_level.id),
+                "board_id": str(board.id),
+                "medium_id": str(medium.id),
+                "subject_id": str(subject.id),
             }
 
-            if chat_request.chapter_id:
-                filters["chapter_id"] = str(chat_request.chapter_id)
+            if chapter:
+                filters["chapter_id"] = str(chapter.id)
 
             names = await get_hierarchy_names(
-                chat_request.class_level_id,
-                chat_request.board_id,
-                chat_request.medium_id,
-                chat_request.subject_id,
-                chat_request.chapter_id,
+                class_level.id,
+                board.id,
+                medium.id,
+                subject.id,
+                chapter.id if chapter else None,
                 session,
             )
 
             logger.info(f"Chat request - Filters: {filters}, Context: {names}")
 
             additional_notes_content = ""
-            if chat_request.chapter_id:
+            if chapter:
                 _result = await session.exec(
                     select(AdditionalNotes).where(
-                        AdditionalNotes.chapter_id == chat_request.chapter_id
+                        AdditionalNotes.chapter_id == chapter.id
                     ))
                 notes = _result.all()
                 if notes:
