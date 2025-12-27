@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 from pydantic import BaseModel
 from datetime import date
 
 from app.models.user import User
 from app.schemas.auth import UserResponse
 from app.services.database import get_session
+from app.services.subscriptions import get_active_subscription_summary
 from app.utils.sanitization import sanitize_string
 from .auth import get_current_user  # reuse your auth dependency
 
@@ -22,13 +24,37 @@ class UserProfileUpdate(BaseModel):
     gender: str | None = None
 
 
+@router.get("/me", response_model=UserResponse)
+async def get_profile(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    user = await session.get(User, current_user.id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    subscription = await get_active_subscription_summary(session, user.id)
+    return UserResponse(
+        id=user.id,
+        phone=user.phone,
+        name=user.name,
+        board_id=user.board_id,
+        medium_id=user.medium_id,
+        class_level_id=user.class_level_id,
+        dob=user.dob,
+        gender=user.gender,
+        is_premium=bool(subscription),
+        subscription=subscription,
+    )
+
+
 @router.put("/me", response_model=UserResponse)
 async def update_profile(
     user_update: UserProfileUpdate,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
-    user = session.get(User, current_user.id)
+    user = await session.get(User, current_user.id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -53,9 +79,10 @@ async def update_profile(
         user.gender = sanitize_string(data["gender"])
 
     session.add(user)
-    session.commit()
-    session.refresh(user)
+    await session.commit()
+    await session.refresh(user)
 
+    subscription = await get_active_subscription_summary(session, user.id)
     return UserResponse(
         id=user.id,
         phone=user.phone,
@@ -65,19 +92,22 @@ async def update_profile(
         class_level_id=user.class_level_id,
         dob=user.dob,
         gender=user.gender,
+        is_premium=bool(subscription),
+        subscription=subscription,
     )
 
 
 @router.delete("/delete-charan")
 async def delete_charan(
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     target_phone = "7406832289"
-    user = session.exec(select(User).where(User.phone == target_phone)).first()
+    _result = await session.exec(select(User).where(User.phone == target_phone))
+    user = _result.first()
 
     if not user:
         return {"deleted": False, "message": "User not found"}
 
-    session.delete(user)
-    session.commit()
+    await session.delete(user)
+    await session.commit()
     return {"deleted": True}

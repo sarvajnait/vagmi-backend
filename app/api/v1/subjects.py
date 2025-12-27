@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session, select
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 from typing import Dict, List, Optional
 from loguru import logger
 
@@ -13,13 +14,14 @@ router = APIRouter()
 
 @router.get("/", response_model=Dict[str, List[SubjectRead]])
 async def get_subjects(
-    medium_id: Optional[int] = Query(None), session: Session = Depends(get_session)
+    medium_id: Optional[int] = Query(None), session: AsyncSession = Depends(get_session)
 ):
     try:
         query = select(Subject, Medium).join(Medium)
         if medium_id:
             query = query.where(Subject.medium_id == medium_id)
-        results = session.exec(query.order_by(Medium.name, Subject.name)).all()
+        _result = await session.exec(query.order_by(Medium.name, Subject.name))
+        results = _result.all()
 
         subjects = [
             SubjectRead(
@@ -38,18 +40,19 @@ async def get_subjects(
 
 @router.post("/", response_model=Dict[str, SubjectRead])
 async def create_subject(
-    subject: SubjectCreate, session: Session = Depends(get_session)
+    subject: SubjectCreate, session: AsyncSession = Depends(get_session)
 ):
     try:
-        medium = session.get(Medium, subject.medium_id)
+        medium = await session.get(Medium, subject.medium_id)
         if not medium:
             raise HTTPException(status_code=400, detail="Medium not found")
 
-        existing = session.exec(
+        _result = await session.exec(
             select(Subject).where(
                 Subject.name == subject.name, Subject.medium_id == subject.medium_id
             )
-        ).first()
+        )
+        existing = _result.first()
         if existing:
             raise HTTPException(
                 status_code=400, detail="Subject already exists for this medium"
@@ -57,8 +60,8 @@ async def create_subject(
 
         db_subject = Subject.model_validate(subject)
         session.add(db_subject)
-        session.commit()
-        session.refresh(db_subject)
+        await session.commit()
+        await session.refresh(db_subject)
         return {
             "data": SubjectRead(
                 id=db_subject.id,
@@ -70,7 +73,7 @@ async def create_subject(
     except HTTPException:
         raise
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         logger.error(f"Error creating subject: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -79,25 +82,25 @@ async def create_subject(
 async def update_subject(
     subject_id: int,
     subject_data: SubjectCreate,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     try:
-        db_subject = session.get(Subject, subject_id)
+        db_subject = await session.get(Subject, subject_id)
         if not db_subject:
             raise HTTPException(status_code=404, detail="Subject not found")
 
-        medium = session.get(Medium, subject_data.medium_id)
+        medium = await session.get(Medium, subject_data.medium_id)
         if not medium:
             raise HTTPException(status_code=400, detail="Medium not found")
 
         # Check for duplicate name within same medium (excluding current subject)
-        existing = session.exec(
+        _result = await session.exec(
             select(Subject).where(
                 Subject.name == subject_data.name,
                 Subject.medium_id == subject_data.medium_id,
                 Subject.id != subject_id,
-            )
-        ).first()
+            ))
+        existing = _result.first()
         if existing:
             raise HTTPException(
                 status_code=400,
@@ -109,8 +112,8 @@ async def update_subject(
         db_subject.medium_id = subject_data.medium_id
 
         session.add(db_subject)
-        session.commit()
-        session.refresh(db_subject)
+        await session.commit()
+        await session.refresh(db_subject)
 
         return {
             "data": SubjectRead(
@@ -124,25 +127,25 @@ async def update_subject(
     except HTTPException:
         raise
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         logger.error(f"Error updating subject: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.delete("/{subject_id}")
-async def delete_subject(subject_id: int, session: Session = Depends(get_session)):
+async def delete_subject(subject_id: int, session: AsyncSession = Depends(get_session)):
     """Delete a subject and all its related resources (chapters, files, embeddings, DB records)."""
     try:
-        subject = session.get(Subject, subject_id)
+        subject = await session.get(Subject, subject_id)
         if not subject:
             raise HTTPException(status_code=404, detail="Subject not found")
 
         # Clean up all related resources for all chapters in this subject
-        cleanup_stats = cleanup_subject_resources(session, subject_id)
+        cleanup_stats = await cleanup_subject_resources(session, subject_id)
 
         # Delete the subject (cascade_delete relationships will handle related DB records)
-        session.delete(subject)
-        session.commit()
+        await session.delete(subject)
+        await session.commit()
 
         return {
             "message": "Subject deleted successfully",
@@ -156,6 +159,6 @@ async def delete_subject(subject_id: int, session: Session = Depends(get_session
     except HTTPException:
         raise
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         logger.error(f"Error deleting subject: {e}")
         raise HTTPException(status_code=500, detail=str(e))

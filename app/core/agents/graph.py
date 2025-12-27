@@ -6,9 +6,6 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from typing import Dict, Optional
 from loguru import logger
 from langgraph.checkpoint.memory import MemorySaver
-from sqlmodel import select
-from app.services.database import get_session
-from app.models import AdditionalNotes
 
 # Database configuration
 CONNECTION_STRING = settings.POSTGRES_URL
@@ -112,7 +109,10 @@ class EducationPlatform:
         self.vector_store_images = vector_store_images
 
     def create_educational_agent(
-        self, filters: Dict[str, str], names: Optional[Dict[str, str]] = None
+        self,
+        filters: Dict[str, str],
+        names: Optional[Dict[str, str]] = None,
+        additional_notes_content: str = "",
     ):
         """
         Create a unified Agent with hierarchical context filters.
@@ -141,28 +141,8 @@ class EducationPlatform:
             filter_desc = ", ".join([f"{k}: {v}" for k, v in filters.items() if v])
             subject_name = "the subject"
             class_name = ""
-
-        # 2. Fetch Additional SQL Notes (Pre-fetch for system prompt)
-        additional_notes_content = ""
-        if filters.get("chapter_id"):
-            session = next(get_session())
-            try:
-                chapter_id = int(filters["chapter_id"])
-                notes = session.exec(
-                    select(AdditionalNotes).where(
-                        AdditionalNotes.chapter_id == chapter_id
-                    )
-                ).all()
-                if notes:
-                    additional_notes_content = (
-                        "\n\n📌 **Important Teacher Context (Must Integrate):**\n"
-                    )
-                    for note in notes:
-                        additional_notes_content += f"• {note.note}\n"
-            except Exception as e:
-                logger.error(f"Error fetching additional context: {e}")
-            finally:
-                session.close()
+        # 2. Additional SQL Notes (pre-fetched by caller)
+        additional_notes_content = additional_notes_content or ""
 
         @tool(response_format="content_and_artifact")
         def retrieve_textbook_with_images(query: str):

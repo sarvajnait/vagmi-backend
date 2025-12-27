@@ -3,3 +3,5 @@ from .user import User
 from .admin import Admin
 from .llm_resources import *
 from .student_content import *
+from .subscriptions import *
+from .llm_usage import *

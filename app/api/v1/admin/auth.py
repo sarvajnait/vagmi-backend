@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Body, Request, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlmodel import select, Session
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 from loguru import logger
 from app.utils.otp import validate_otp
 
@@ -34,7 +35,7 @@ security = HTTPBearer()
 # -----------------------
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> Admin:
     try:
         token = sanitize_string(credentials.credentials)
@@ -44,7 +45,7 @@ async def get_current_user(
                 status_code=401, detail="Invalid authentication credentials"
             )
 
-        user = session.get(Admin, int(user_id))
+        user = await session.get(Admin, int(user_id))
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         return user
@@ -59,12 +60,13 @@ async def get_current_user(
 @router.post("/register", response_model=AdminAuthResponse)
 @limiter.limit(settings.RATE_LIMIT_ENDPOINTS["register"][0])
 async def register_user(
-    request: Request, user_data: AdminCreate, session: Session = Depends(get_session)
+    request: Request, user_data: AdminCreate, session: AsyncSession = Depends(get_session)
 ):
 
     phone = sanitize_phone(user_data.phone)
 
-    existing_user = session.exec(select(Admin).where(Admin.phone == phone)).first()
+    _result = await session.exec(select(Admin).where(Admin.phone == phone))
+    existing_user = _result.first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Phone already registered")
 
@@ -72,8 +74,8 @@ async def register_user(
         phone=phone,
     )
     session.add(user)
-    session.commit()
-    session.refresh(user)
+    await session.commit()
+    await session.refresh(user)
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
@@ -103,7 +105,7 @@ async def login_otp(
     phone: str = Body(..., embed=True),
     otp: str = Body(..., embed=True),
     otp_secret: str = Body(..., embed=True),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     phone = sanitize_phone(phone)
     otp = sanitize_string(otp)
@@ -112,7 +114,8 @@ async def login_otp(
     if not validate_otp(otp, otp_secret):
         raise HTTPException(status_code=401, detail="Invalid or expired OTP")
 
-    user = session.exec(select(Admin).where(Admin.phone == phone)).first()
+    _result = await session.exec(select(Admin).where(Admin.phone == phone))
+    user = _result.first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -142,14 +145,14 @@ async def login_otp(
 async def refresh_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     token = sanitize_string(credentials.credentials)
     user_id = verify_refresh_token(token)
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-    user = session.get(Admin, int(user_id))
+    user = await session.get(Admin, int(user_id))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -169,10 +172,11 @@ async def refresh_token(
 async def check_user_exists(
     phone: str = Body(..., embed=True),
     app_signature: str = Body(default=""),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     phone = sanitize_phone(phone)
-    user = session.exec(select(Admin).where(Admin.phone == phone)).first()
+    _result = await session.exec(select(Admin).where(Admin.phone == phone))
+    user = _result.first()
     if user:
         return {
             "status": "success",

@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, Body, Request, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlmodel import select, Session
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 from loguru import logger
 from app.utils.otp import generate_otp, validate_otp, send_sms
 from app.models.user import User
 from app.schemas.auth import UserCreate, TokenPair, AuthResponse, UserResponse
 from app.services.database import get_session
+from app.services.subscriptions import get_active_subscription_summary
 from app.utils.auth import (
     create_access_token,
     create_refresh_token,
@@ -28,7 +30,7 @@ security = HTTPBearer()
 # -----------------------
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> User:
     try:
         token = sanitize_string(credentials.credentials)
@@ -38,7 +40,7 @@ async def get_current_user(
                 status_code=401, detail="Invalid authentication credentials"
             )
 
-        user = session.get(User, int(user_id))
+        user = await session.get(User, int(user_id))
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         return user
@@ -53,7 +55,9 @@ async def get_current_user(
 @router.post("/register", response_model=AuthResponse)
 @limiter.limit(settings.RATE_LIMIT_ENDPOINTS["register"][0])
 async def register_user(
-    request: Request, user_data: UserCreate, session: Session = Depends(get_session)
+    request: Request,
+    user_data: UserCreate,
+    session: AsyncSession = Depends(get_session),
 ):
     print(user_data)
     phone = sanitize_phone(user_data.phone)
@@ -63,7 +67,8 @@ async def register_user(
     medium = user_data.medium
     grade = user_data.grade
 
-    existing_user = session.exec(select(User).where(User.phone == phone)).first()
+    _result = await session.exec(select(User).where(User.phone == phone))
+    existing_user = _result.first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Phone already registered")
 
@@ -76,9 +81,10 @@ async def register_user(
         class_level_id=grade,
     )
     session.add(user)
-    session.commit()
-    session.refresh(user)
+    await session.commit()
+    await session.refresh(user)
 
+    subscription = await get_active_subscription_summary(session, user.id)
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
 
@@ -90,6 +96,8 @@ async def register_user(
             board_id=board,
             medium_id=medium,
             class_level_id=grade,
+            is_premium=bool(subscription),
+            subscription=subscription,
         ),
         tokens=TokenPair(
             access_token=access_token.access_token,
@@ -110,15 +118,17 @@ async def login(
     request: Request,
     username: str = Body(..., embed=True),
     password: str = Body(..., embed=True),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     username = sanitize_phone(username)
     password = sanitize_string(password)
 
-    user = session.exec(select(User).where(User.phone == username)).first()
+    _result = await session.exec(select(User).where(User.phone == username))
+    user = _result.first()
     if not user or not user.verify_password(password):
         raise HTTPException(status_code=401, detail="Incorrect phone or password")
 
+    subscription = await get_active_subscription_summary(session, user.id)
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
 
@@ -130,6 +140,8 @@ async def login(
             board_id=user.board_id,
             medium_id=user.medium_id,
             class_level_id=user.class_level_id,
+            is_premium=bool(subscription),
+            subscription=subscription,
         ),
         tokens=TokenPair(
             access_token=access_token.access_token,
@@ -151,7 +163,7 @@ async def login_otp(
     phone: str = Body(..., embed=True),
     otp: str = Body(..., embed=True),
     otp_secret: str = Body(..., embed=True),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     phone = sanitize_phone(phone)
     otp = sanitize_string(otp)
@@ -160,10 +172,12 @@ async def login_otp(
     if not validate_otp(otp, otp_secret):
         raise HTTPException(status_code=401, detail="Invalid or expired OTP")
 
-    user = session.exec(select(User).where(User.phone == phone)).first()
+    _result = await session.exec(select(User).where(User.phone == phone))
+    user = _result.first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    subscription = await get_active_subscription_summary(session, user.id)
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
 
@@ -175,6 +189,8 @@ async def login_otp(
             board_id=user.board_id,
             medium_id=user.medium_id,
             class_level_id=user.class_level_id,
+            is_premium=bool(subscription),
+            subscription=subscription,
         ),
         tokens=TokenPair(
             access_token=access_token.access_token,
@@ -189,31 +205,44 @@ async def login_otp(
 # -----------------------
 # Refresh Token Endpoint
 # -----------------------
-@router.post("/refresh", response_model=TokenPair)
+@router.post("/refresh", response_model=AuthResponse)
 @limiter.limit(settings.RATE_LIMIT_ENDPOINTS["refresh"][0])
 async def refresh_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     token = sanitize_string(credentials.credentials)
     user_id = verify_refresh_token(token)
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-    user = session.get(User, int(user_id))
+    user = await session.get(User, int(user_id))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    subscription = await get_active_subscription_summary(session, user.id)
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
 
-    return TokenPair(
-        access_token=access_token.access_token,
-        refresh_token=refresh_token.access_token,
-        token_type="bearer",
-        expires_at=access_token.expires_at,
-        refresh_expires_at=refresh_token.expires_at,
+    return AuthResponse(
+        user=UserResponse(
+            id=user.id,
+            phone=user.phone,
+            name=user.name,
+            board_id=user.board_id,
+            medium_id=user.medium_id,
+            class_level_id=user.class_level_id,
+            is_premium=bool(subscription),
+            subscription=subscription,
+        ),
+        tokens=TokenPair(
+            access_token=access_token.access_token,
+            refresh_token=refresh_token.access_token,
+            token_type="bearer",
+            expires_at=access_token.expires_at,
+            refresh_expires_at=refresh_token.expires_at,
+        ),
     )
 
 
@@ -224,10 +253,11 @@ async def refresh_token(
 async def check_user_exists(
     phone: str = Body(..., embed=True),
     app_signature: str = Body(default=""),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     phone = sanitize_phone(phone)
-    user = session.exec(select(User).where(User.phone == phone)).first()
+    _result = await session.exec(select(User).where(User.phone == phone))
+    user = _result.first()
     if user:
         return {
             "status": "success",
@@ -253,7 +283,7 @@ async def send_otp(
     phone = sanitize_phone(phone)
     otp, secret = generate_otp()
 
-    send_sms(phone,otp)
+    send_sms(phone, otp)
 
     return {
         "status": "success",

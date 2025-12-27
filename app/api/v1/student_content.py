@@ -1,7 +1,8 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
 from loguru import logger
-from sqlmodel import Session
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 from app.models import (
     Chapter,
     StudentTextbook,
@@ -22,7 +23,7 @@ router = APIRouter()
 async def upload_textbook(
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Upload a textbook directly to DigitalOcean and add to DB/vector store."""
     try:
@@ -38,8 +39,8 @@ async def upload_textbook(
             file_url=file_url,
         )
         session.add(textbook)
-        session.commit()
-        session.refresh(textbook)
+        await session.commit()
+        await session.refresh(textbook)
 
         return {
             "message": "Document uploaded",
@@ -62,37 +63,37 @@ async def upload_textbook(
 async def get_textbooks(
     subject_id: Optional[int] = None,
     chapter_id: Optional[int] = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Get textbooks grouped by chapter, filtered by subject or chapter."""
     try:
         chapters = []
         if subject_id is not None:
-            subject = session.get(Subject, subject_id)
+            subject = await session.get(Subject, subject_id)
             if not subject:
                 raise HTTPException(status_code=404, detail="Subject not found")
-            chapters = (
-                session.query(Chapter)
-                .filter(Chapter.subject_id == subject_id)
-                .all()
-            )
+            _result = await session.exec(
+                select(Chapter).where(Chapter.subject_id == subject_id))
+            chapters = _result.all()
             if not chapters:
                 return {"data": []}
         elif chapter_id is not None:
-            chapter = session.get(Chapter, chapter_id)
+            chapter = await session.get(Chapter, chapter_id)
             if not chapter:
                 raise HTTPException(status_code=404, detail="Chapter not found")
             chapters = [chapter]
         else:
-            chapters = session.query(Chapter).all()
+            _result = await session.exec(select(Chapter))
+            chapters = _result.all()
 
         chapter_ids = [c.id for c in chapters]
-        textbooks_query = session.query(StudentTextbook)
+        textbooks_query = select(StudentTextbook)
         if chapter_ids:
-            textbooks_query = textbooks_query.filter(
+            textbooks_query = textbooks_query.where(
                 StudentTextbook.chapter_id.in_(chapter_ids)
             )
-        textbooks = textbooks_query.all()
+        _result = await session.exec(textbooks_query)
+        textbooks = _result.all()
 
         textbooks_by_chapter: dict[int, list[dict]] = {c.id: [] for c in chapters}
         for textbook in textbooks:
@@ -119,18 +120,18 @@ async def get_textbooks(
 
 
 @router.delete("/textbook/{textbook_id}")
-async def delete_textbook(textbook_id: int, session: Session = Depends(get_session)):
+async def delete_textbook(textbook_id: int, session: AsyncSession = Depends(get_session)):
     """Delete a textbook from DB, vector store, and DigitalOcean Spaces."""
     try:
-        textbook = session.get(StudentTextbook, textbook_id)
+        textbook = await session.get(StudentTextbook, textbook_id)
         if not textbook:
             raise HTTPException(status_code=404, detail="Textbook not found")
 
         if textbook.file_url:
             delete_from_do(textbook.file_url)
 
-        session.delete(textbook)
-        session.commit()
+        await session.delete(textbook)
+        await session.commit()
 
         return {"message": f"Textbook '{textbook.title}' deleted successfully"}
 
@@ -150,7 +151,7 @@ async def upload_note(
     chapter_id: int = Form(...),
     title: str = Form(...),
     description: Optional[str] = Form(None),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """
     Upload a note file directly to DigitalOcean and add to DB.
@@ -166,8 +167,8 @@ async def upload_note(
             file_url=file_url,
         )
         session.add(note)
-        session.commit()
-        session.refresh(note)
+        await session.commit()
+        await session.refresh(note)
 
         return {"message": "Note uploaded", "data": note.dict()}
 
@@ -179,14 +180,15 @@ async def upload_note(
 @router.get("/notes")
 async def get_notes(
     chapter_id: Optional[int] = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Get all notes or filter by chapter."""
     try:
-        query = session.query(StudentNotes)
+        query = select(StudentNotes)
         if chapter_id is not None:
-            query = query.filter(StudentNotes.chapter_id == chapter_id)
-        notes = query.all()
+            query = query.where(StudentNotes.chapter_id == chapter_id)
+        _result = await session.exec(query)
+        notes = _result.all()
         return {"data": [n.dict() for n in notes]}
 
     except Exception as e:
@@ -195,10 +197,10 @@ async def get_notes(
 
 
 @router.delete("/notes/{note_id}")
-async def delete_note(note_id: int, session: Session = Depends(get_session)):
+async def delete_note(note_id: int, session: AsyncSession = Depends(get_session)):
     """Delete a note from DB and DigitalOcean Spaces."""
     try:
-        note = session.get(StudentNotes, note_id)
+        note = await session.get(StudentNotes, note_id)
         if not note:
             raise HTTPException(status_code=404, detail="Note not found")
 
@@ -209,8 +211,8 @@ async def delete_note(note_id: int, session: Session = Depends(get_session)):
                 logger.error(f"Error deleting note file from DO: {e}")
                 raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
 
-        session.delete(note)
-        session.commit()
+        await session.delete(note)
+        await session.commit()
 
         return {"message": f"Note '{note.title}' deleted successfully"}
 
@@ -230,7 +232,7 @@ async def upload_video(
     chapter_id: int = Form(...),
     title: str = Form(...),
     description: Optional[str] = Form(None),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """
     Upload a video file directly to DigitalOcean and add to DB.
@@ -246,8 +248,8 @@ async def upload_video(
             file_url=file_url,
         )
         session.add(video)
-        session.commit()
-        session.refresh(video)
+        await session.commit()
+        await session.refresh(video)
 
         return {"message": "Video uploaded", "data": video.model_dump()}
 
@@ -259,15 +261,16 @@ async def upload_video(
 @router.get("/videos")
 async def get_videos(
     chapter_id: Optional[int] = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Get all videos or filter by chapter."""
     try:
-        query = session.query(StudentVideo)
+        query = select(StudentVideo)
         if chapter_id is not None:
-            query = query.filter(StudentVideo.chapter_id == chapter_id)
-        notes = query.all()
-        return {"data": [n.dict() for n in notes]}
+            query = query.where(StudentVideo.chapter_id == chapter_id)
+        _result = await session.exec(query)
+        videos = _result.all()
+        return {"data": [v.dict() for v in videos]}
 
     except Exception as e:
         logger.error(f"Error fetching videos: {e}")
@@ -275,10 +278,10 @@ async def get_videos(
 
 
 @router.delete("/videos/{video_id}")
-async def delete_video(video_id: int, session: Session = Depends(get_session)):
+async def delete_video(video_id: int, session: AsyncSession = Depends(get_session)):
     """Delete a video from DB and DigitalOcean Spaces."""
     try:
-        video = session.get(StudentVideo, video_id)
+        video = await session.get(StudentVideo, video_id)
         if not video:
             raise HTTPException(status_code=404, detail="Video not found")
 
@@ -289,8 +292,8 @@ async def delete_video(video_id: int, session: Session = Depends(get_session)):
                 logger.error(f"Error deleting video file from DO: {e}")
                 raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
 
-        session.delete(video)
-        session.commit()
+        await session.delete(video)
+        await session.commit()
 
         return {"message": f"Video '{video.title}' deleted successfully"}
 
@@ -312,11 +315,11 @@ async def upload_previous_year_question_paper(
     num_pages: int = Form(...),
     is_premium: bool = Form(False),
     enabled: bool = Form(True),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Upload a previous year question paper and store it against a subject."""
     try:
-        subject = session.get(Subject, subject_id)
+        subject = await session.get(Subject, subject_id)
         if not subject:
             raise HTTPException(status_code=400, detail="Subject not found")
 
@@ -332,8 +335,8 @@ async def upload_previous_year_question_paper(
             enabled=enabled,
         )
         session.add(paper)
-        session.commit()
-        session.refresh(paper)
+        await session.commit()
+        await session.refresh(paper)
 
         return {
             "message": "Previous year question paper uploaded",
@@ -343,7 +346,7 @@ async def upload_previous_year_question_paper(
     except HTTPException:
         raise
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         logger.error(f"Error uploading previous year paper: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -351,14 +354,15 @@ async def upload_previous_year_question_paper(
 @router.get("/previous-year-question-papers")
 async def get_previous_year_question_papers(
     subject_id: Optional[int] = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """List previous year question papers, optionally filtered by subject."""
     try:
-        query = session.query(PreviousYearQuestionPaper)
+        query = select(PreviousYearQuestionPaper)
         if subject_id is not None:
-            query = query.filter(PreviousYearQuestionPaper.subject_id == subject_id)
-        papers = query.all()
+            query = query.where(PreviousYearQuestionPaper.subject_id == subject_id)
+        _result = await session.exec(query)
+        papers = _result.all()
         return {"data": [p.dict() for p in papers]}
 
     except Exception as e:
@@ -368,11 +372,11 @@ async def get_previous_year_question_papers(
 
 @router.get("/previous-year-question-papers/{paper_id}")
 async def get_previous_year_question_paper(
-    paper_id: int, session: Session = Depends(get_session)
+    paper_id: int, session: AsyncSession = Depends(get_session)
 ):
     """Get a single previous year question paper by ID."""
     try:
-        paper = session.get(PreviousYearQuestionPaper, paper_id)
+        paper = await session.get(PreviousYearQuestionPaper, paper_id)
         if not paper:
             raise HTTPException(status_code=404, detail="Previous year paper not found")
         return {"data": paper.dict()}
@@ -392,16 +396,16 @@ async def update_previous_year_question_paper(
     num_pages: Optional[int] = Form(None),
     is_premium: Optional[bool] = Form(None),
     enabled: Optional[bool] = Form(None),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Update metadata, file, or subject for a previous year question paper."""
     try:
-        paper = session.get(PreviousYearQuestionPaper, paper_id)
+        paper = await session.get(PreviousYearQuestionPaper, paper_id)
         if not paper:
             raise HTTPException(status_code=404, detail="Previous year paper not found")
 
         if subject_id is not None:
-            subject = session.get(Subject, subject_id)
+            subject = await session.get(Subject, subject_id)
             if not subject:
                 raise HTTPException(status_code=400, detail="Subject not found")
             paper.subject_id = subject_id
@@ -433,8 +437,8 @@ async def update_previous_year_question_paper(
             paper.file_url = new_file_url
 
         session.add(paper)
-        session.commit()
-        session.refresh(paper)
+        await session.commit()
+        await session.refresh(paper)
 
         return {
             "message": "Previous year question paper updated",
@@ -444,18 +448,18 @@ async def update_previous_year_question_paper(
     except HTTPException:
         raise
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         logger.error(f"Error updating previous year paper {paper_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/previous-year-question-papers/{paper_id}")
 async def delete_previous_year_question_paper(
-    paper_id: int, session: Session = Depends(get_session)
+    paper_id: int, session: AsyncSession = Depends(get_session)
 ):
     """Delete a previous year question paper and its file."""
     try:
-        paper = session.get(PreviousYearQuestionPaper, paper_id)
+        paper = await session.get(PreviousYearQuestionPaper, paper_id)
         if not paper:
             raise HTTPException(status_code=404, detail="Previous year paper not found")
 
@@ -468,13 +472,13 @@ async def delete_previous_year_question_paper(
                 )
                 raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
 
-        session.delete(paper)
-        session.commit()
+        await session.delete(paper)
+        await session.commit()
         return {"message": f"Previous year paper '{paper.title}' deleted successfully"}
 
     except HTTPException:
         raise
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         logger.error(f"Error deleting previous year paper {paper_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

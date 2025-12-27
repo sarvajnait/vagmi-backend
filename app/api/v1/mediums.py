@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session, select
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 from typing import Dict, List, Optional
 from loguru import logger
 
@@ -12,13 +13,14 @@ router = APIRouter()
 
 @router.get("/", response_model=Dict[str, List[MediumRead]])
 async def get_mediums(
-    board_id: Optional[int] = Query(None), session: Session = Depends(get_session)
+    board_id: Optional[int] = Query(None), session: AsyncSession = Depends(get_session)
 ):
     try:
         query = select(Medium, Board).join(Board)
         if board_id:
             query = query.where(Medium.board_id == board_id)
-        results = session.exec(query.order_by(Board.name, Medium.name)).all()
+        _result = await session.exec(query.order_by(Board.name, Medium.name))
+        results = _result.all()
 
         mediums = [
             MediumRead(
@@ -36,17 +38,18 @@ async def get_mediums(
 
 
 @router.post("/", response_model=Dict[str, MediumRead])
-async def create_medium(medium: MediumCreate, session: Session = Depends(get_session)):
+async def create_medium(medium: MediumCreate, session: AsyncSession = Depends(get_session)):
     try:
-        board = session.get(Board, medium.board_id)
+        board = await session.get(Board, medium.board_id)
         if not board:
             raise HTTPException(status_code=400, detail="Board not found")
 
-        existing = session.exec(
+        _result = await session.exec(
             select(Medium).where(
                 Medium.name == medium.name, Medium.board_id == medium.board_id
             )
-        ).first()
+        )
+        existing = _result.first()
         if existing:
             raise HTTPException(
                 status_code=400, detail="Medium already exists for this board"
@@ -54,8 +57,8 @@ async def create_medium(medium: MediumCreate, session: Session = Depends(get_ses
 
         db_medium = Medium.model_validate(medium)
         session.add(db_medium)
-        session.commit()
-        session.refresh(db_medium)
+        await session.commit()
+        await session.refresh(db_medium)
         return {
             "data": MediumRead(
                 id=db_medium.id,
@@ -67,24 +70,24 @@ async def create_medium(medium: MediumCreate, session: Session = Depends(get_ses
     except HTTPException:
         raise
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         logger.error(f"Error creating medium: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.delete("/{medium_id}")
-async def delete_medium(medium_id: int, session: Session = Depends(get_session)):
+async def delete_medium(medium_id: int, session: AsyncSession = Depends(get_session)):
     try:
-        medium = session.get(Medium, medium_id)
+        medium = await session.get(Medium, medium_id)
         if not medium:
             raise HTTPException(status_code=404, detail="Medium not found")
-        session.delete(medium)
-        session.commit()
+        await session.delete(medium)
+        await session.commit()
         return {"message": "Medium deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         logger.error(f"Error deleting medium: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -93,25 +96,25 @@ async def delete_medium(medium_id: int, session: Session = Depends(get_session))
 async def update_medium(
     medium_id: int,
     medium_data: MediumCreate,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     try:
-        db_medium = session.get(Medium, medium_id)
+        db_medium = await session.get(Medium, medium_id)
         if not db_medium:
             raise HTTPException(status_code=404, detail="Medium not found")
 
-        board = session.get(Board, medium_data.board_id)
+        board = await session.get(Board, medium_data.board_id)
         if not board:
             raise HTTPException(status_code=400, detail="Board not found")
 
         # Prevent duplicate medium names under the same board (excluding itself)
-        existing = session.exec(
+        _result = await session.exec(
             select(Medium).where(
                 Medium.name == medium_data.name,
                 Medium.board_id == medium_data.board_id,
                 Medium.id != medium_id,
-            )
-        ).first()
+            ))
+        existing = _result.first()
         if existing:
             raise HTTPException(
                 status_code=400,
@@ -123,8 +126,8 @@ async def update_medium(
         db_medium.board_id = medium_data.board_id
 
         session.add(db_medium)
-        session.commit()
-        session.refresh(db_medium)
+        await session.commit()
+        await session.refresh(db_medium)
 
         return {
             "data": MediumRead(
@@ -138,6 +141,6 @@ async def update_medium(
     except HTTPException:
         raise
     except Exception as e:
-        session.rollback()
+        await session.rollback()
         logger.error(f"Error updating medium: {e}")
         raise HTTPException(status_code=400, detail=str(e))

@@ -56,6 +56,7 @@ class ChatRequest(BaseModel):
     """
 
     message: str
+    user_id: Optional[int] = None
     class_level_id: int
     board_id: int
     medium_id: int

@@ -1,6 +1,7 @@
 """Utility functions for cleaning up resources (files, embeddings) when deleting entities."""
 
-from sqlmodel import Session, text, select
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import text, select
 from loguru import logger
 from app.utils.files import delete_from_do
 from app.models import (
@@ -23,8 +24,8 @@ from app.core.agents.graph import (
 )
 
 
-def delete_embeddings_by_chapter_id(
-    session: Session, chapter_id: int, collection_name: str, metadata_key: str
+async def delete_embeddings_by_chapter_id(
+    session: AsyncSession, chapter_id: int, collection_name: str, metadata_key: str
 ) -> int:
     """
     Delete embeddings from a collection by chapter_id.
@@ -46,7 +47,7 @@ def delete_embeddings_by_chapter_id(
         )
         AND cmetadata->>'chapter_id' = :chapter_id
         """
-        result = session.execute(
+        result = await session.execute(
             text(query),
             {
                 "collection_name": collection_name,
@@ -63,8 +64,8 @@ def delete_embeddings_by_chapter_id(
         return 0
 
 
-def delete_embeddings_by_resource_id(
-    session: Session,
+async def delete_embeddings_by_resource_id(
+    session: AsyncSession,
     resource_id: int,
     collection_name: str,
     metadata_key: str,
@@ -89,7 +90,7 @@ def delete_embeddings_by_resource_id(
         )
         AND cmetadata->>'{metadata_key}' = :resource_id
         """
-        result = session.execute(
+        result = await session.execute(
             text(query),
             {
                 "collection_name": collection_name,
@@ -108,7 +109,7 @@ def delete_embeddings_by_resource_id(
         return 0
 
 
-def cleanup_chapter_resources(session: Session, chapter_id: int) -> dict:
+async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> dict:
     """
     Clean up all resources (files and embeddings) for a chapter.
     
@@ -137,28 +138,34 @@ def cleanup_chapter_resources(session: Session, chapter_id: int) -> dict:
 
     try:
         # Get all resources for this chapter
-        llm_textbooks = session.exec(
+        _result = await session.exec(
             select(LLMTextbook).where(LLMTextbook.chapter_id == chapter_id)
-        ).all()
-        llm_images = session.exec(
+        )
+        llm_textbooks = _result.all()
+        _result = await session.exec(
             select(LLMImage).where(LLMImage.chapter_id == chapter_id)
-        ).all()
-        llm_notes = session.exec(
+        )
+        llm_images = _result.all()
+        _result = await session.exec(
             select(LLMNote).where(LLMNote.chapter_id == chapter_id)
-        ).all()
-        qa_patterns = session.exec(
+        )
+        llm_notes = _result.all()
+        _result = await session.exec(
             select(QAPattern).where(QAPattern.chapter_id == chapter_id)
-        ).all()
-        student_textbooks = session.exec(
+        )
+        qa_patterns = _result.all()
+        _result = await session.exec(
             select(StudentTextbook).where(StudentTextbook.chapter_id == chapter_id)
-        ).all()
-        student_notes = session.exec(
+        )
+        student_textbooks = _result.all()
+        _result = await session.exec(
             select(StudentNotes).where(StudentNotes.chapter_id == chapter_id)
-        ).all()
-        student_videos = session.exec(
+        )
+        student_notes = _result.all()
+        _result = await session.exec(
             select(StudentVideo).where(StudentVideo.chapter_id == chapter_id)
-        ).all()
-
+        )
+        student_videos = _result.all()
         # Delete LLM Textbook files and embeddings
         for textbook in llm_textbooks:
             if textbook.file_url:
@@ -227,16 +234,16 @@ def cleanup_chapter_resources(session: Session, chapter_id: int) -> dict:
                     stats["errors"].append(f"Error deleting student video file {video.file_url}: {e}")
 
         # Delete all embeddings by chapter_id from all collections
-        stats["embeddings_deleted"] += delete_embeddings_by_chapter_id(
+        stats["embeddings_deleted"] += await delete_embeddings_by_chapter_id(
             session, chapter_id, COLLECTION_NAME_TEXTBOOKS, "chapter_id"
         )
-        stats["embeddings_deleted"] += delete_embeddings_by_chapter_id(
+        stats["embeddings_deleted"] += await delete_embeddings_by_chapter_id(
             session, chapter_id, COLLECTION_NAME_IMAGES, "chapter_id"
         )
-        stats["embeddings_deleted"] += delete_embeddings_by_chapter_id(
+        stats["embeddings_deleted"] += await delete_embeddings_by_chapter_id(
             session, chapter_id, COLLECTION_NAME_NOTES, "chapter_id"
         )
-        stats["embeddings_deleted"] += delete_embeddings_by_chapter_id(
+        stats["embeddings_deleted"] += await delete_embeddings_by_chapter_id(
             session, chapter_id, COLLECTION_NAME_QA, "chapter_id"
         )
 
@@ -252,7 +259,7 @@ def cleanup_chapter_resources(session: Session, chapter_id: int) -> dict:
     return stats
 
 
-def cleanup_subject_resources(session: Session, subject_id: int) -> dict:
+async def cleanup_subject_resources(session: AsyncSession, subject_id: int) -> dict:
     """
     Clean up all resources for all chapters in a subject.
     
@@ -272,11 +279,11 @@ def cleanup_subject_resources(session: Session, subject_id: int) -> dict:
 
     try:
         # Clean up subject-level resources
-        pyq_papers = session.exec(
+        _result = await session.exec(
             select(PreviousYearQuestionPaper).where(
                 PreviousYearQuestionPaper.subject_id == subject_id
-            )
-        ).all()
+            ))
+        pyq_papers = _result.all()
         for paper in pyq_papers:
             if paper.file_url:
                 try:
@@ -288,12 +295,11 @@ def cleanup_subject_resources(session: Session, subject_id: int) -> dict:
                     )
 
         # Get all chapters for this subject
-        chapters = session.exec(
-            select(Chapter).where(Chapter.subject_id == subject_id)
-        ).all()
-
+        _result = await session.exec(
+            select(Chapter).where(Chapter.subject_id == subject_id))
+        chapters = _result.all()
         for chapter in chapters:
-            chapter_stats = cleanup_chapter_resources(session, chapter.id)
+            chapter_stats = await cleanup_chapter_resources(session, chapter.id)
             stats["chapters_cleaned"] += 1
             stats["total_files_deleted"] += chapter_stats["files_deleted"]
             stats["total_embeddings_deleted"] += chapter_stats["embeddings_deleted"]

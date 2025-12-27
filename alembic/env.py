@@ -29,13 +29,16 @@ target_metadata = BaseModel.metadata
 # ... etc.
 def include_object(object, name, type_, reflected, compare_to):
     """Filter out certain tables from Alembic autogenerate."""
-    if type_ == "table" and name in [
-        "checkpoints",
-        "checkpoint_blobs",
-        "checkpoint_writes",
-        "checkpoint_migrations",
-    ]:
-        return False
+    if type_ == "table":
+        if name in [
+            "checkpoints",
+            "checkpoint_blobs",
+            "checkpoint_writes",
+            "checkpoint_migrations",
+        ]:
+            return False
+        if name.startswith("langchain_pg_"):
+            return False
     return True
 
 

@@ -50,6 +50,19 @@ class UserCreate(BaseModel):
     grade: int = Field(..., description="Selected grade/class level ID")
 
 
+class SubscriptionSummary(BaseModel):
+    id: int
+    plan_id: int
+    plan_name: str | None = None
+    starts_at: date
+    ends_at: date
+    status: str
+    class_level_id: int | None = None
+    board_id: int | None = None
+    medium_id: int | None = None
+    is_active: bool = True
+
+
 class UserResponse(BaseModel):
     id: int
     phone: str = Field(..., description="User's phone number")
@@ -59,6 +72,8 @@ class UserResponse(BaseModel):
     class_level_id: int
     dob: date | None = None
     gender: str | None = None
+    is_premium: bool = False
+    subscription: SubscriptionSummary | None = None
 
 
 class AdminCreate(BaseModel):

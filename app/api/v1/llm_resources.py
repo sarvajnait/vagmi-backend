@@ -1,7 +1,8 @@
 from typing import Dict, Optional
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
 from loguru import logger
-from sqlmodel import Session
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 from app.models import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern
 from app.services.database import get_session
 from app.core.agents.graph import EducationPlatform
@@ -77,7 +78,7 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
 async def upload_textbook(
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Upload a textbook to DigitalOcean and add to DB/vector store."""
     try:
@@ -94,8 +95,8 @@ async def upload_textbook(
             file_url=file_url,
         )
         session.add(textbook)
-        session.commit()
-        session.refresh(textbook)
+        await session.commit()
+        await session.refresh(textbook)
 
         metadata = {
             "chapter_id": chapter_id,
@@ -120,14 +121,15 @@ async def upload_textbook(
 @router.get("/textbook")
 async def get_textbooks(
     chapter_id: Optional[int] = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Get textbooks filtered by chapter."""
     try:
-        query = session.query(LLMTextbook)
+        query = select(LLMTextbook)
         if chapter_id is not None:
-            query = query.filter(LLMTextbook.chapter_id == chapter_id)
-        textbooks = query.all()
+            query = query.where(LLMTextbook.chapter_id == chapter_id)
+        _result = await session.exec(query)
+        textbooks = _result.all()
         return {"data": [t.dict() for t in textbooks]}
 
     except Exception as e:
@@ -136,15 +138,15 @@ async def get_textbooks(
 
 
 @router.delete("/textbook/{textbook_id}")
-async def delete_textbook(textbook_id: int, session: Session = Depends(get_session)):
+async def delete_textbook(textbook_id: int, session: AsyncSession = Depends(get_session)):
     """Delete a textbook from DB, vector store, and DigitalOcean Spaces."""
     try:
-        textbook = session.get(LLMTextbook, textbook_id)
+        textbook = await session.get(LLMTextbook, textbook_id)
         if not textbook:
             raise HTTPException(status_code=404, detail="Textbook not found")
 
         # Delete from vector store using utility function
-        deleted_count = delete_embeddings_by_resource_id(
+        deleted_count = await delete_embeddings_by_resource_id(
             session, textbook_id, COLLECTION_NAME_TEXTBOOKS, "textbook_id"
         )
 
@@ -158,8 +160,8 @@ async def delete_textbook(textbook_id: int, session: Session = Depends(get_sessi
                 raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
 
         # Delete from DB
-        session.delete(textbook)
-        session.commit()
+        await session.delete(textbook)
+        await session.commit()
 
         return {
             "message": f"Textbook '{textbook.title}' deleted successfully",
@@ -180,14 +182,14 @@ async def delete_textbook(textbook_id: int, session: Session = Depends(get_sessi
 async def create_additional_note(
     chapter_id: int = Form(...),
     note: str = Form(...),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Create a new additional note for a chapter."""
     try:
         additional_note = AdditionalNotes(chapter_id=chapter_id, note=note)
         session.add(additional_note)
-        session.commit()
-        session.refresh(additional_note)
+        await session.commit()
+        await session.refresh(additional_note)
         return {"message": "Note added", "data": additional_note.dict()}
 
     except Exception as e:
@@ -198,14 +200,15 @@ async def create_additional_note(
 @router.get("/additional-notes")
 async def get_additional_notes(
     chapter_id: Optional[int] = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Get all notes or filter by chapter."""
     try:
-        query = session.query(AdditionalNotes)
+        query = select(AdditionalNotes)
         if chapter_id is not None:
-            query = query.filter(AdditionalNotes.chapter_id == chapter_id)
-        notes = query.all()
+            query = query.where(AdditionalNotes.chapter_id == chapter_id)
+        _result = await session.exec(query)
+        notes = _result.all()
         return {"data": [n.dict() for n in notes]}
 
     except Exception as e:
@@ -214,15 +217,15 @@ async def get_additional_notes(
 
 
 @router.delete("/additional-notes/{note_id}")
-async def delete_additional_note(note_id: int, session: Session = Depends(get_session)):
+async def delete_additional_note(note_id: int, session: AsyncSession = Depends(get_session)):
     """Delete a specific note by ID."""
     try:
-        note = session.get(AdditionalNotes, note_id)
+        note = await session.get(AdditionalNotes, note_id)
         if not note:
             raise HTTPException(status_code=404, detail="Note not found")
 
-        session.delete(note)
-        session.commit()
+        await session.delete(note)
+        await session.commit()
         return {"message": f"Note with id {note_id} deleted successfully"}
 
     except Exception as e:
@@ -239,7 +242,7 @@ async def upload_image(
     chapter_id: int = Form(...),
     description: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Upload an image to DigitalOcean, add to DB, and add to vector store with embeddings."""
     try:
@@ -269,8 +272,8 @@ async def upload_image(
             tags=tags_list,
         )
         session.add(image)
-        session.commit()
-        session.refresh(image)
+        await session.commit()
+        await session.refresh(image)
 
         # Create embeddings for the image based on title + description + tags
         # This allows semantic search on image metadata
@@ -324,14 +327,15 @@ async def upload_image(
 @router.get("/image")
 async def get_images(
     chapter_id: Optional[int] = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Get images filtered by chapter."""
     try:
-        query = session.query(LLMImage)
+        query = select(LLMImage)
         if chapter_id is not None:
-            query = query.filter(LLMImage.chapter_id == chapter_id)
-        images = query.all()
+            query = query.where(LLMImage.chapter_id == chapter_id)
+        _result = await session.exec(query)
+        images = _result.all()
         return {"data": [img.dict() for img in images]}
 
     except Exception as e:
@@ -340,16 +344,16 @@ async def get_images(
 
 
 @router.delete("/image/{image_id}")
-async def delete_image(image_id: int, session: Session = Depends(get_session)):
+async def delete_image(image_id: int, session: AsyncSession = Depends(get_session)):
     """Delete an image from DB, DigitalOcean Spaces, and vector store."""
     try:
-        image = session.get(LLMImage, image_id)
+        image = await session.get(LLMImage, image_id)
         if not image:
             raise HTTPException(status_code=404, detail="Image not found")
 
         # Delete from vector store using utility function
         try:
-            deleted_count = delete_embeddings_by_resource_id(
+            deleted_count = await delete_embeddings_by_resource_id(
                 session, image_id, COLLECTION_NAME_IMAGES, "image_id"
             )
             logger.info(
@@ -369,8 +373,8 @@ async def delete_image(image_id: int, session: Session = Depends(get_session)):
                 raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
 
         # Delete from DB
-        session.delete(image)
-        session.commit()
+        await session.delete(image)
+        await session.commit()
 
         return {
             "message": f"Image '{image.title}' deleted successfully from all stores",
@@ -391,7 +395,7 @@ async def upload_llm_note(
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
     description: Optional[str] = Form(None),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Upload an LLM note PDF and store clean chunks for RAG."""
     try:
@@ -405,8 +409,8 @@ async def upload_llm_note(
             file_url=file_url,
         )
         session.add(note)
-        session.commit()
-        session.refresh(note)
+        await session.commit()
+        await session.refresh(note)
 
         loader = PyPDFLoader(file_url)
         pages = loader.load()
@@ -462,14 +466,15 @@ async def upload_llm_note(
 @router.get("/llm-note")
 async def get_llm_notes(
     chapter_id: Optional[int] = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Get LLM notes filtered by chapter."""
     try:
-        query = session.query(LLMNote)
+        query = select(LLMNote)
         if chapter_id is not None:
-            query = query.filter(LLMNote.chapter_id == chapter_id)
-        notes = query.all()
+            query = query.where(LLMNote.chapter_id == chapter_id)
+        _result = await session.exec(query)
+        notes = _result.all()
         return {"data": [note.dict() for note in notes]}
 
     except Exception as e:
@@ -478,15 +483,15 @@ async def get_llm_notes(
 
 
 @router.delete("/llm-note/{note_id}")
-async def delete_llm_note(note_id: int, session: Session = Depends(get_session)):
+async def delete_llm_note(note_id: int, session: AsyncSession = Depends(get_session)):
     """Delete an LLM note from DB, vector store, and DigitalOcean."""
     try:
-        note = session.get(LLMNote, note_id)
+        note = await session.get(LLMNote, note_id)
         if not note:
             raise HTTPException(status_code=404, detail="LLM note not found")
 
         # Delete from vector store using utility function
-        deleted_count = delete_embeddings_by_resource_id(
+        deleted_count = await delete_embeddings_by_resource_id(
             session, note_id, COLLECTION_NAME_NOTES, "note_id"
         )
 
@@ -500,8 +505,8 @@ async def delete_llm_note(note_id: int, session: Session = Depends(get_session))
                 raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
 
         # Delete from DB
-        session.delete(note)
-        session.commit()
+        await session.delete(note)
+        await session.commit()
 
         return {
             "message": f"LLM note '{note.title}' deleted successfully",
@@ -523,7 +528,7 @@ async def upload_qa_pattern(
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
     description: Optional[str] = Form(None),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Upload Q&A pattern PDF with clean, reasoning-safe chunks."""
     try:
@@ -537,8 +542,8 @@ async def upload_qa_pattern(
             file_url=file_url,
         )
         session.add(pattern)
-        session.commit()
-        session.refresh(pattern)
+        await session.commit()
+        await session.refresh(pattern)
 
         loader = PyPDFLoader(file_url)
         pages = loader.load()
@@ -604,14 +609,15 @@ async def upload_qa_pattern(
 @router.get("/qa-pattern")
 async def get_qa_patterns(
     chapter_id: Optional[int] = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Get Q&A patterns filtered by chapter."""
     try:
-        query = session.query(QAPattern)
+        query = select(QAPattern)
         if chapter_id is not None:
-            query = query.filter(QAPattern.chapter_id == chapter_id)
-        patterns = query.all()
+            query = query.where(QAPattern.chapter_id == chapter_id)
+        _result = await session.exec(query)
+        patterns = _result.all()
         return {"data": [pattern.dict() for pattern in patterns]}
 
     except Exception as e:
@@ -620,15 +626,15 @@ async def get_qa_patterns(
 
 
 @router.delete("/qa-pattern/{pattern_id}")
-async def delete_qa_pattern(pattern_id: int, session: Session = Depends(get_session)):
+async def delete_qa_pattern(pattern_id: int, session: AsyncSession = Depends(get_session)):
     """Delete a Q&A pattern from DB, vector store, and DigitalOcean."""
     try:
-        pattern = session.get(QAPattern, pattern_id)
+        pattern = await session.get(QAPattern, pattern_id)
         if not pattern:
             raise HTTPException(status_code=404, detail="Q&A pattern not found")
 
         # Delete from vector store using utility function
-        deleted_count = delete_embeddings_by_resource_id(
+        deleted_count = await delete_embeddings_by_resource_id(
             session, pattern_id, COLLECTION_NAME_QA, "pattern_id"
         )
 
@@ -642,8 +648,8 @@ async def delete_qa_pattern(pattern_id: int, session: Session = Depends(get_sess
                 raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
 
         # Delete from DB
-        session.delete(pattern)
-        session.commit()
+        await session.delete(pattern)
+        await session.commit()
 
         return {
             "message": f"Q&A pattern '{pattern.title}' deleted successfully",
