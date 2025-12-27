@@ -150,13 +150,13 @@ async def stream_chat(
             )
 
             filter_key = (
-                f"{chat_request.class_level_id}_"
-                f"{chat_request.board_id}_"
-                f"{chat_request.medium_id}_"
-                f"{chat_request.subject_id}"
+                f"{class_level.id}_"
+                f"{board.id}_"
+                f"{medium.id}_"
+                f"{subject.id}"
             )
-            if chat_request.chapter_id:
-                filter_key += f"_{chat_request.chapter_id}"
+            if chapter:
+                filter_key += f"_{chapter.id}"
 
             config = {"configurable": {"thread_id": f"session_{filter_key}"}}
 
