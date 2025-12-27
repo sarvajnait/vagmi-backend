@@ -205,7 +205,9 @@ class EducationPlatform:
         def retrieve_full_chapter_textbook():
             """
             Retrieve ALL textbook chunks for the current chapter.
-            Use ONLY when the user asks for a chapter summary or overview.
+            Use ONLY when the user asks for whole-chapter outputs that require full context
+            (e.g., chapter summary/overview, list of important questions, or any task that
+            depends on scanning the entire chapter rather than a narrow topic).
             """
             if not filters.get("chapter_id"):
                 return "No chapter context available.", []
@@ -356,16 +358,20 @@ Never select images after the response has started.
 
 ---
 
-## 📖 CHAPTER SUMMARY / OVERVIEW (STRICT RULE)
+## 📖 FULL CHAPTER CONTEXT (STRICT RULE)
 
 ### Tool: `retrieve_full_chapter_textbook`
 
-Use this tool ONLY when the student asks for:
+Use this tool ONLY when the student asks for whole-chapter outputs such as:
 - chapter summary
 - summarize this chapter
 - chapter overview
 - brief explanation of the whole chapter
 - revision of the entire chapter
+- list of important questions (chapter-wise)
+- most important questions from this chapter
+- chapter-wise key questions
+- any request that clearly needs scanning the entire chapter
 
 Rules:
 - You MUST use `retrieve_full_chapter_textbook`
@@ -380,6 +386,7 @@ After retrieving the full chapter:
   - What the chapter is about
   - Key ideas or sections
   - Important terms (if relevant)
+- If the user asked for important questions, derive them from the full chapter and present a clean numbered list
 
 ---
 
