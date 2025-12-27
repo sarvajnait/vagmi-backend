@@ -18,6 +18,7 @@ from app.services.database import get_session
 from app.services.llm_usage import get_user_daily_total, record_usage_metadata
 from app.core.config import settings
 from loguru import logger
+from app.api.v1.auth import get_current_user
 
 router = APIRouter()
 platform = EducationPlatform()
@@ -61,15 +62,17 @@ async def get_hierarchy_names(
 @router.post("/stream-chat")
 async def stream_chat(
     chat_request: ChatRequest,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     """Stream chat responses with hierarchical filtering and image support."""
-    if chat_request.user_id is None:
-        raise HTTPException(status_code=400, detail="user_id is required")
+    if chat_request.user_id is not None and chat_request.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="user_id does not match token")
+    user_id = current_user.id
 
     async def generate_response():
         try:
-            daily_total = await get_user_daily_total(session, chat_request.user_id)
+            daily_total = await get_user_daily_total(session, user_id)
             if daily_total >= settings.DAILY_TOKEN_LIMIT:
                 message = "Daily token limit reached. Please try again tomorrow."
                 yield f"data: {json.dumps({'type': 'token', 'content': message})}\n\n"
@@ -252,7 +255,7 @@ async def stream_chat(
 
             if usage_cb.usage_metadata:
                 await record_usage_metadata(
-                    session, chat_request.user_id, usage_cb.usage_metadata
+                    session, user_id, usage_cb.usage_metadata
                 )
 
             yield f"data: {json.dumps({'type': 'complete', 'content': ''})}\n\n"
@@ -273,13 +276,17 @@ async def stream_chat(
 
 @router.get("/usage")
 async def get_usage(
-    user_id: int = Query(..., description="User ID to check usage for"),
+    user_id: int | None = Query(None, description="User ID to check usage for"),
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    total = await get_user_daily_total(session, user_id)
+    if user_id is not None and user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="user_id does not match token")
+    resolved_user_id = user_id or current_user.id
+    total = await get_user_daily_total(session, resolved_user_id)
     limit = settings.DAILY_TOKEN_LIMIT
     return {
-        "user_id": user_id,
+        "user_id": resolved_user_id,
         "daily_total_tokens": total,
         "daily_limit_tokens": limit,
         "remaining_tokens": max(limit - total, 0),

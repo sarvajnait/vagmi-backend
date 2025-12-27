@@ -23,6 +23,8 @@ router = APIRouter()
 async def upload_textbook(
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
     """Upload a textbook directly to DigitalOcean and add to DB/vector store."""
@@ -34,8 +36,8 @@ async def upload_textbook(
 
         textbook = StudentTextbook(
             chapter_id=chapter_id,
-            title=file.filename,
-            description=None,
+            title=title or file.filename,
+            description=description,
             file_url=file_url,
         )
         session.add(textbook)
@@ -142,6 +144,56 @@ async def delete_textbook(textbook_id: int, session: AsyncSession = Depends(get_
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/textbook/{textbook_id}")
+async def update_textbook(
+    textbook_id: int,
+    file: UploadFile | None = File(None),
+    chapter_id: Optional[int] = Form(None),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a textbook's metadata or file."""
+    try:
+        textbook = await session.get(StudentTextbook, textbook_id)
+        if not textbook:
+            raise HTTPException(status_code=404, detail="Textbook not found")
+
+        if chapter_id is not None:
+            chapter = await session.get(Chapter, chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            textbook.chapter_id = chapter_id
+
+        if title is not None:
+            textbook.title = title
+        if description is not None:
+            textbook.description = description
+
+        if file:
+            do_path = f"chapters/{textbook.chapter_id}/student-content/textbooks"
+            new_file_url = upload_to_do(file, do_path)
+
+            if textbook.file_url:
+                delete_from_do(textbook.file_url)
+
+            textbook.file_url = new_file_url
+            if title is None:
+                textbook.title = file.filename
+
+        session.add(textbook)
+        await session.commit()
+        await session.refresh(textbook)
+
+        return {"message": "Textbook updated", "data": textbook.dict()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating textbook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================
 # Notes Endpoints
 # ============================================================
@@ -223,6 +275,56 @@ async def delete_note(note_id: int, session: AsyncSession = Depends(get_session)
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/notes/{note_id}")
+async def update_note(
+    note_id: int,
+    file: UploadFile | None = File(None),
+    chapter_id: Optional[int] = Form(None),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a student note's metadata or file."""
+    try:
+        note = await session.get(StudentNotes, note_id)
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+
+        if chapter_id is not None:
+            chapter = await session.get(Chapter, chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            note.chapter_id = chapter_id
+
+        if title is not None:
+            note.title = title
+        if description is not None:
+            note.description = description
+
+        if file:
+            do_path = f"chapters/{note.chapter_id}/student-content/notes"
+            new_file_url = upload_to_do(file, do_path)
+
+            if note.file_url:
+                delete_from_do(note.file_url)
+
+            note.file_url = new_file_url
+            if title is None:
+                note.title = file.filename
+
+        session.add(note)
+        await session.commit()
+        await session.refresh(note)
+
+        return {"message": "Note updated", "data": note.dict()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating note: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================
 # Video Endpoints
 # ============================================================
@@ -301,6 +403,56 @@ async def delete_video(video_id: int, session: AsyncSession = Depends(get_sessio
         raise
     except Exception as e:
         logger.error(f"Error deleting video: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/videos/{video_id}")
+async def update_video(
+    video_id: int,
+    file: UploadFile | None = File(None),
+    chapter_id: Optional[int] = Form(None),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a student video's metadata or file."""
+    try:
+        video = await session.get(StudentVideo, video_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+
+        if chapter_id is not None:
+            chapter = await session.get(Chapter, chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            video.chapter_id = chapter_id
+
+        if title is not None:
+            video.title = title
+        if description is not None:
+            video.description = description
+
+        if file:
+            do_path = f"chapters/{video.chapter_id}/student-content/videos"
+            new_file_url = upload_to_do(file, do_path)
+
+            if video.file_url:
+                delete_from_do(video.file_url)
+
+            video.file_url = new_file_url
+            if title is None:
+                video.title = file.filename
+
+        session.add(video)
+        await session.commit()
+        await session.refresh(video)
+
+        return {"message": "Video updated", "data": video.dict()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating video: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

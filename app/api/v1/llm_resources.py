@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
 from loguru import logger
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
-from app.models import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern
+from app.models import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern, Chapter
 from app.services.database import get_session
 from app.core.agents.graph import EducationPlatform
 from langchain_community.document_loaders import PyPDFLoader
@@ -12,6 +12,7 @@ from app.utils.files import upload_to_do, delete_from_do
 from app.utils.cleanup import delete_embeddings_by_resource_id
 import uuid
 from app.utils.files import compress_image
+from langchain_core.documents import Document
 
 router = APIRouter()
 platform = EducationPlatform()
@@ -71,6 +72,42 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
         raise
 
 
+def build_image_document(
+    *,
+    chapter_id: int,
+    image_id: int,
+    title: str,
+    description: Optional[str],
+    file_url: str,
+    tags: Optional[list[str]],
+):
+    searchable_text = title
+    if description:
+        searchable_text += f"\n{description}"
+    if tags:
+        searchable_text += f"\nTags: {', '.join(tags)}"
+
+    return Document(
+        page_content=searchable_text,
+        metadata={
+            "chapter_id": str(chapter_id),
+            "image_id": str(image_id),
+            "title": title,
+            "description": description or "",
+            "file_url": file_url,
+            "tags": tags or [],
+            "content_type": "image",
+        },
+    )
+
+
+def parse_tags(tags: Optional[str]) -> Optional[list[str]]:
+    if tags is None:
+        return None
+    tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+    return tags_list or []
+
+
 # ============================================================
 # Textbook Endpoints
 # ============================================================
@@ -78,6 +115,8 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
 async def upload_textbook(
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
     """Upload a textbook to DigitalOcean and add to DB/vector store."""
@@ -90,8 +129,8 @@ async def upload_textbook(
         # Add textbook to DB
         textbook = LLMTextbook(
             chapter_id=chapter_id,
-            title=file.filename,
-            description=None,
+            title=title or file.filename,
+            description=description,
             file_url=file_url,
         )
         session.add(textbook)
@@ -175,6 +214,72 @@ async def delete_textbook(textbook_id: int, session: AsyncSession = Depends(get_
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/textbook/{textbook_id}")
+async def update_textbook(
+    textbook_id: int,
+    file: UploadFile | None = File(None),
+    chapter_id: Optional[int] = Form(None),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a textbook's metadata or file and reindex embeddings when needed."""
+    try:
+        textbook = await session.get(LLMTextbook, textbook_id)
+        if not textbook:
+            raise HTTPException(status_code=404, detail="Textbook not found")
+
+        should_reindex = False
+
+        if chapter_id is not None and chapter_id != textbook.chapter_id:
+            chapter = await session.get(Chapter, chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            textbook.chapter_id = chapter_id
+            should_reindex = True
+
+        if title is not None:
+            textbook.title = title
+        if description is not None:
+            textbook.description = description
+
+        if file:
+            do_path = f"chapters/{textbook.chapter_id}/llm-resources/textbooks"
+            new_file_url = upload_to_do(file, do_path)
+
+            if textbook.file_url:
+                delete_from_do(textbook.file_url)
+
+            textbook.file_url = new_file_url
+            if title is None:
+                textbook.title = file.filename
+            should_reindex = True
+
+        if should_reindex:
+            await delete_embeddings_by_resource_id(
+                session, textbook_id, COLLECTION_NAME_TEXTBOOKS, "textbook_id"
+            )
+            metadata = {
+                "chapter_id": textbook.chapter_id,
+                "source_file": textbook.title,
+                "file_url": textbook.file_url,
+                "textbook_id": textbook.id,
+            }
+            process_textbook_upload(textbook.file_url, metadata)
+
+        session.add(textbook)
+        await session.commit()
+        await session.refresh(textbook)
+
+        return {"message": "Textbook updated", "data": textbook.dict()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating textbook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================
 # LLM Notes Endpoints
 # ============================================================
@@ -233,6 +338,40 @@ async def delete_additional_note(note_id: int, session: AsyncSession = Depends(g
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/additional-notes/{note_id}")
+async def update_additional_note(
+    note_id: int,
+    chapter_id: Optional[int] = Form(None),
+    note: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update an additional note."""
+    try:
+        additional_note = await session.get(AdditionalNotes, note_id)
+        if not additional_note:
+            raise HTTPException(status_code=404, detail="Note not found")
+
+        if chapter_id is not None and chapter_id != additional_note.chapter_id:
+            chapter = await session.get(Chapter, chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            additional_note.chapter_id = chapter_id
+        if note is not None:
+            additional_note.note = note
+
+        session.add(additional_note)
+        await session.commit()
+        await session.refresh(additional_note)
+
+        return {"message": "Note updated", "data": additional_note.dict()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating note: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================
 # LLM Image Endpoints
 # ============================================================
@@ -240,6 +379,7 @@ async def delete_additional_note(note_id: int, session: AsyncSession = Depends(g
 async def upload_image(
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
+    title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
@@ -259,14 +399,13 @@ async def upload_image(
         file_url = upload_to_do(compressed_file, do_path)
 
         # Parse tags from comma-separated string
-        tags_list = None
-        if tags:
-            tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+        tags_list = parse_tags(tags)
+        image_title = title or file.filename
 
         # Add image to DB
         image = LLMImage(
             chapter_id=chapter_id,
-            title=file.filename,
+            title=image_title,
             description=description,
             file_url=file_url,
             tags=tags_list,
@@ -278,37 +417,19 @@ async def upload_image(
         # Create embeddings for the image based on title + description + tags
         # This allows semantic search on image metadata
         try:
-            from langchain_core.documents import Document
-
-            # Combine title, description, and tags into searchable text
-            searchable_text = file.filename
-            if description:
-                searchable_text += f"\n{description}"
-            if tags_list:
-                searchable_text += f"\nTags: {', '.join(tags_list)}"
-
-            # Create a document with the searchable text and metadata
-            doc = Document(
-                page_content=searchable_text,
-                metadata={
-                    "chapter_id": str(chapter_id),
-                    "image_id": str(image.id),
-                    "title": file.filename,
-                    "description": description or "",
-                    "file_url": file_url,
-                    "tags": tags_list or [],
-                    "content_type": "image",
-                },
+            doc = build_image_document(
+                chapter_id=chapter_id,
+                image_id=image.id,
+                title=image_title,
+                description=description,
+                file_url=file_url,
+                tags=tags_list,
             )
-
-            # Add to vector store for semantic search
             platform.vector_store_images.add_documents(
                 [doc],
                 ids=[str(uuid.uuid4())],
             )
-            logger.info(
-                f"Added image to vector store: {file.filename} (ID: {image.id})"
-            )
+            logger.info(f"Added image to vector store: {image_title} (ID: {image.id})")
 
         except Exception as e:
             logger.error(f"Error adding image to vector store: {e}")
@@ -387,6 +508,96 @@ async def delete_image(image_id: int, session: AsyncSession = Depends(get_sessio
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/image/{image_id}")
+async def update_image(
+    image_id: int,
+    file: UploadFile | None = File(None),
+    chapter_id: Optional[int] = Form(None),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update an image's metadata or file and refresh vector store."""
+    try:
+        image = await session.get(LLMImage, image_id)
+        if not image:
+            raise HTTPException(status_code=404, detail="Image not found")
+
+        should_reindex = False
+
+        if chapter_id is not None and chapter_id != image.chapter_id:
+            chapter = await session.get(Chapter, chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            image.chapter_id = chapter_id
+            should_reindex = True
+
+        if title is not None:
+            image.title = title
+            should_reindex = True
+        if description is not None:
+            image.description = description
+            should_reindex = True
+        if tags is not None:
+            image.tags = parse_tags(tags)
+            should_reindex = True
+
+        if file:
+            compressed_file = compress_image(
+                file,
+                max_width=1600,
+                max_height=1600,
+                quality=80,
+            )
+            do_path = f"chapters/{image.chapter_id}/llm-resources/images"
+            new_file_url = upload_to_do(compressed_file, do_path)
+
+            if image.file_url:
+                delete_from_do(image.file_url)
+
+            image.file_url = new_file_url
+            if title is None:
+                image.title = file.filename
+            should_reindex = True
+
+        if should_reindex:
+            try:
+                await delete_embeddings_by_resource_id(
+                    session, image_id, COLLECTION_NAME_IMAGES, "image_id"
+                )
+            except Exception as e:
+                logger.error(f"Error deleting image embeddings: {e}")
+
+            try:
+                doc = build_image_document(
+                    chapter_id=image.chapter_id,
+                    image_id=image.id,
+                    title=image.title,
+                    description=image.description,
+                    file_url=image.file_url,
+                    tags=image.tags,
+                )
+                platform.vector_store_images.add_documents(
+                    [doc],
+                    ids=[str(uuid.uuid4())],
+                )
+            except Exception as e:
+                logger.error(f"Error reindexing image embeddings: {e}")
+
+        session.add(image)
+        await session.commit()
+        await session.refresh(image)
+
+        return {"message": "Image updated", "data": image.dict()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================
 # LLM Note Endpoints (PDF-based, for RAG)
 # ============================================================
@@ -394,6 +605,7 @@ async def delete_image(image_id: int, session: AsyncSession = Depends(get_sessio
 async def upload_llm_note(
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
+    title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
@@ -404,7 +616,7 @@ async def upload_llm_note(
 
         note = LLMNote(
             chapter_id=chapter_id,
-            title=file.filename,
+            title=title or file.filename,
             description=description,
             file_url=file_url,
         )
@@ -520,6 +732,92 @@ async def delete_llm_note(note_id: int, session: AsyncSession = Depends(get_sess
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/llm-note/{note_id}")
+async def update_llm_note(
+    note_id: int,
+    file: UploadFile | None = File(None),
+    chapter_id: Optional[int] = Form(None),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update an LLM note and reindex when file or chapter changes."""
+    try:
+        note = await session.get(LLMNote, note_id)
+        if not note:
+            raise HTTPException(status_code=404, detail="LLM note not found")
+
+        should_reindex = False
+        if chapter_id is not None and chapter_id != note.chapter_id:
+            chapter = await session.get(Chapter, chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            note.chapter_id = chapter_id
+            should_reindex = True
+
+        if title is not None:
+            note.title = title
+        if description is not None:
+            note.description = description
+
+        if file:
+            do_path = f"chapters/{note.chapter_id}/llm-resources/llm_notes"
+            new_file_url = upload_to_do(file, do_path)
+
+            if note.file_url:
+                delete_from_do(note.file_url)
+
+            note.file_url = new_file_url
+            if title is None:
+                note.title = file.filename
+            should_reindex = True
+
+        if should_reindex:
+            await delete_embeddings_by_resource_id(
+                session, note_id, COLLECTION_NAME_NOTES, "note_id"
+            )
+
+            loader = PyPDFLoader(note.file_url)
+            pages = loader.load()
+            filtered_pages = [p for p in pages]
+            if not filtered_pages:
+                logger.warning("No valid LLM note content found")
+            else:
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=900,
+                    chunk_overlap=120,
+                    separators=["\n\n", "\n", ".", " "],
+                    length_function=len,
+                )
+                documents = text_splitter.split_documents(filtered_pages)
+                for doc in documents:
+                    doc.metadata.update(
+                        {
+                            "chapter_id": str(note.chapter_id),
+                            "source_file": note.title,
+                            "file_url": note.file_url,
+                            "note_id": str(note.id),
+                            "content_type": "llm_note",
+                        }
+                    )
+                platform.vector_store_notes.add_documents(
+                    documents,
+                    ids=[str(uuid.uuid4()) for _ in documents],
+                )
+
+        session.add(note)
+        await session.commit()
+        await session.refresh(note)
+
+        return {"message": "LLM note updated", "data": note.dict()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating LLM note: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================
 # Q&A Pattern Endpoints (PDF-based, for RAG)
 # ============================================================
@@ -527,6 +825,7 @@ async def delete_llm_note(note_id: int, session: AsyncSession = Depends(get_sess
 async def upload_qa_pattern(
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
+    title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
@@ -537,7 +836,7 @@ async def upload_qa_pattern(
 
         pattern = QAPattern(
             chapter_id=chapter_id,
-            title=file.filename,
+            title=title or file.filename,
             description=description,
             file_url=file_url,
         )
@@ -660,4 +959,100 @@ async def delete_qa_pattern(pattern_id: int, session: AsyncSession = Depends(get
         raise
     except Exception as e:
         logger.error(f"Error deleting Q&A pattern: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/qa-pattern/{pattern_id}")
+async def update_qa_pattern(
+    pattern_id: int,
+    file: UploadFile | None = File(None),
+    chapter_id: Optional[int] = Form(None),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a Q&A pattern and reindex when file or chapter changes."""
+    try:
+        pattern = await session.get(QAPattern, pattern_id)
+        if not pattern:
+            raise HTTPException(status_code=404, detail="Q&A pattern not found")
+
+        should_reindex = False
+        if chapter_id is not None and chapter_id != pattern.chapter_id:
+            chapter = await session.get(Chapter, chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            pattern.chapter_id = chapter_id
+            should_reindex = True
+
+        if title is not None:
+            pattern.title = title
+        if description is not None:
+            pattern.description = description
+
+        if file:
+            do_path = f"chapters/{pattern.chapter_id}/llm-resources/qa_patterns"
+            new_file_url = upload_to_do(file, do_path)
+
+            if pattern.file_url:
+                delete_from_do(pattern.file_url)
+
+            pattern.file_url = new_file_url
+            if title is None:
+                pattern.title = file.filename
+            should_reindex = True
+
+        if should_reindex:
+            await delete_embeddings_by_resource_id(
+                session, pattern_id, COLLECTION_NAME_QA, "pattern_id"
+            )
+
+            loader = PyPDFLoader(pattern.file_url)
+            pages = loader.load()
+
+            def is_valid_qa_page(text: str) -> bool:
+                text = text.strip()
+                if len(text) < 50:
+                    return False
+                digit_ratio = sum(c.isdigit() for c in text) / max(len(text), 1)
+                if digit_ratio > 0.45:
+                    return False
+                return True
+
+            filtered_pages = [p for p in pages if is_valid_qa_page(p.page_content)]
+            if not filtered_pages:
+                logger.warning("No valid Q&A content found")
+            else:
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=650,
+                    chunk_overlap=100,
+                    separators=["\n\n", "\n", ".", " "],
+                    length_function=len,
+                )
+                documents = text_splitter.split_documents(filtered_pages)
+                for doc in documents:
+                    doc.metadata.update(
+                        {
+                            "chapter_id": str(pattern.chapter_id),
+                            "source_file": pattern.title,
+                            "file_url": pattern.file_url,
+                            "pattern_id": str(pattern.id),
+                            "content_type": "qa_pattern",
+                        }
+                    )
+                platform.vector_store_qa.add_documents(
+                    documents,
+                    ids=[str(uuid.uuid4()) for _ in documents],
+                )
+
+        session.add(pattern)
+        await session.commit()
+        await session.refresh(pattern)
+
+        return {"message": "Q&A pattern updated", "data": pattern.dict()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating Q&A pattern: {e}")
         raise HTTPException(status_code=500, detail=str(e))
