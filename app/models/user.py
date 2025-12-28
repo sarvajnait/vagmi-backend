@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, List
 from sqlmodel import Field, Relationship, Column, Integer, ForeignKey
 from app.models.base import BaseModel
 from datetime import date
@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from app.models.academic_hierarchy import ClassLevel
     from app.models.academic_hierarchy import Board
     from app.models.academic_hierarchy import Medium
+    from app.models.llm_usage import LLMUsage
 
 
 class User(BaseModel, table=True):
@@ -35,6 +36,9 @@ class User(BaseModel, table=True):
     class_level: Optional["ClassLevel"] = Relationship()
     board: Optional["Board"] = Relationship()
     medium: Optional["Medium"] = Relationship()
+    llm_usages: List["LLMUsage"] = Relationship(
+        back_populates="user", cascade_delete=True
+    )
 
     def verify_password(self, password: str) -> bool:
         """Verify if the provided password matches the hash."""

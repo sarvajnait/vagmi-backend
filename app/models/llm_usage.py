@@ -1,7 +1,8 @@
 from typing import Optional
-from sqlmodel import SQLModel, Field, Column
+from sqlmodel import SQLModel, Field, Column, Relationship
 from sqlalchemy import JSON, Integer, ForeignKey, String
 from app.models.base import BaseModel
+from app.models.user import User
 
 
 class LLMUsageBase(SQLModel):
@@ -22,6 +23,7 @@ class LLMUsage(LLMUsageBase, BaseModel, table=True):
     __tablename__ = "llmusage"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    user: User = Relationship(back_populates="llm_usages")
 
 
 class LLMUsageCreate(LLMUsageBase):
