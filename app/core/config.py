@@ -140,7 +140,7 @@ class Settings:
 
         self.GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
         self.MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", "100"))
-        self.DAILY_TOKEN_LIMIT = int(os.getenv("DAILY_TOKEN_LIMIT", "100000"))
+        self.DAILY_TOKEN_LIMIT = int(os.getenv("DAILY_TOKEN_LIMIT", "200000"))
 
         self.DO_SPACES_ACCESS_KEY = os.getenv("DO_SPACES_ACCESS_KEY", "")
         self.DO_SPACES_SECRET_KEY = os.getenv("DO_SPACES_SECRET_KEY", "")

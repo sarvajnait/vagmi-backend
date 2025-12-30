@@ -77,7 +77,9 @@ async def stream_chat(
         if not chapter:
             raise HTTPException(status_code=404, detail="Chapter not found")
         if chapter.subject_id != subject.id:
-            raise HTTPException(status_code=400, detail="Chapter does not belong to subject")
+            raise HTTPException(
+                status_code=400, detail="Chapter does not belong to subject"
+            )
 
     medium = await session.get(Medium, subject.medium_id)
     if not medium:
@@ -90,11 +92,15 @@ async def stream_chat(
         raise HTTPException(status_code=404, detail="Class level not found")
 
     if current_user.class_level_id and current_user.class_level_id != class_level.id:
-        raise HTTPException(status_code=403, detail="User class level does not match subject")
+        raise HTTPException(
+            status_code=403, detail="User class level does not match subject"
+        )
     if current_user.board_id and current_user.board_id != board.id:
         raise HTTPException(status_code=403, detail="User board does not match subject")
     if current_user.medium_id and current_user.medium_id != medium.id:
-        raise HTTPException(status_code=403, detail="User medium does not match subject")
+        raise HTTPException(
+            status_code=403, detail="User medium does not match subject"
+        )
 
     async def generate_response():
         try:
@@ -134,7 +140,8 @@ async def stream_chat(
                 _result = await session.exec(
                     select(AdditionalNotes).where(
                         AdditionalNotes.chapter_id == chapter.id
-                    ))
+                    )
+                )
                 notes = _result.all()
                 if notes:
                     additional_notes_content = (
@@ -150,10 +157,7 @@ async def stream_chat(
             )
 
             filter_key = (
-                f"{class_level.id}_"
-                f"{board.id}_"
-                f"{medium.id}_"
-                f"{subject.id}"
+                f"{class_level.id}_" f"{board.id}_" f"{medium.id}_" f"{subject.id}"
             )
             if chapter:
                 filter_key += f"_{chapter.id}"
@@ -166,7 +170,7 @@ async def stream_chat(
             # Image state (per request)
             # -----------------------------
             retrieved_images_metadata = []
-            selected_images = []      # ✅ FIX: always defined
+            selected_images = []  # ✅ FIX: always defined
             images_streamed = False
 
             # -----------------------------
@@ -186,7 +190,6 @@ async def stream_chat(
                     name = event.get("name", "")
                     data = event.get("data", {})
 
-                    # -----------------------------
                     # IMAGE RETRIEVAL
                     # -----------------------------
                     if (
@@ -197,14 +200,19 @@ async def stream_chat(
 
                         if hasattr(output, "artifact") and output.artifact:
                             artifact = output.artifact
-                            retrieved_images_metadata = artifact.get("image_metadata", [])
-                            selected_images = []     # reset per retrieval
+                            retrieved_images_metadata = artifact.get(
+                                "image_metadata", []
+                            )
+                            selected_images = []  # reset per retrieval
                             images_streamed = False
 
                     # -----------------------------
                     # IMAGE SELECTION
                     # -----------------------------
-                    elif event_type == "on_tool_end" and "select_relevant_images" in name:
+                    elif (
+                        event_type == "on_tool_end" and "select_relevant_images" in name
+                    ):
+
                         output = data.get("output")
 
                         if hasattr(output, "artifact") and output.artifact:
@@ -280,9 +288,7 @@ async def stream_chat(
                 logger.error(f"Error updating checkpoint: {e}", exc_info=True)
 
             if usage_cb.usage_metadata:
-                await record_usage_metadata(
-                    session, user_id, usage_cb.usage_metadata
-                )
+                await record_usage_metadata(session, user_id, usage_cb.usage_metadata)
 
             yield f"data: {json.dumps({'type': 'complete', 'content': ''})}\n\n"
 
