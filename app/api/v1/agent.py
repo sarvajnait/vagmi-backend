@@ -221,16 +221,35 @@ async def stream_chat(
                             if artifact.get("action") == "select_images":
                                 selected_ids = artifact.get("selected_image_ids", [])
 
-                                if not retrieved_images_metadata:
-                                    continue
-
-                                selected_ids_str = {str(i) for i in selected_ids}
-
-                                selected_images = [
-                                    img
-                                    for img in retrieved_images_metadata
-                                    if str(img.get("image_id")) in selected_ids_str
-                                ]
+                                selected_images = []
+                                if retrieved_images_metadata:
+                                    selected_ids_str = {str(i) for i in selected_ids}
+                                    selected_images = [
+                                        img
+                                        for img in retrieved_images_metadata
+                                        if str(img.get("image_id")) in selected_ids_str
+                                    ]
+                                else:
+                                    _result = await session.exec(
+                                        select(LLMImage).where(
+                                            LLMImage.id.in_(selected_ids)
+                                        )
+                                    )
+                                    images = _result.all()
+                                    image_map = {img.id: img for img in images}
+                                    for image_id in selected_ids:
+                                        image = image_map.get(image_id)
+                                        if not image:
+                                            continue
+                                        selected_images.append(
+                                            {
+                                                "image_id": image.id,
+                                                "file_url": image.file_url,
+                                                "title": image.title,
+                                                "description": image.description,
+                                                "tags": image.tags or [],
+                                            }
+                                        )
 
                                 if selected_images and not images_streamed:
                                     for image in selected_images:
