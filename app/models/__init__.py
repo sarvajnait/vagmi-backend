@@ -5,3 +5,5 @@ from .llm_resources import *
 from .student_content import *
 from .subscriptions import *
 from .llm_usage import *
+from .activities import *
+from .activity_jobs import *

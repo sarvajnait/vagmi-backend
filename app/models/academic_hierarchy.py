@@ -14,6 +14,10 @@ from app.models.student_content import (
     StudentVideo,
     PreviousYearQuestionPaper,
 )
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.activities import ChapterActivity
 
 
 # --------------------
@@ -165,6 +169,9 @@ class Chapter(ChapterBase, BaseModel, table=True):
         back_populates="chapter", cascade_delete=True
     )
     student_videos: List["StudentVideo"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+    activities: List["ChapterActivity"] = Relationship(
         back_populates="chapter", cascade_delete=True
     )
 

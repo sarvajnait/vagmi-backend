@@ -15,6 +15,7 @@ from app.models import (
     StudentVideo,
     PreviousYearQuestionPaper,
     Chapter,
+    ChapterActivity,
 )
 from app.core.agents.graph import (
     COLLECTION_NAME_TEXTBOOKS,
@@ -166,6 +167,10 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
             select(StudentVideo).where(StudentVideo.chapter_id == chapter_id)
         )
         student_videos = _result.all()
+        _result = await session.exec(
+            select(ChapterActivity).where(ChapterActivity.chapter_id == chapter_id)
+        )
+        activities = _result.all()
         # Delete LLM Textbook files and embeddings
         for textbook in llm_textbooks:
             if textbook.file_url:
@@ -245,6 +250,17 @@ async def cleanup_chapter_resources(session: AsyncSession, chapter_id: int) -> d
                 except Exception as e:
                     stats["errors"].append(
                         f"Error deleting student video file {video.file_url}: {e}"
+                    )
+
+        # Delete Activity answer images
+        for activity in activities:
+            if activity.answer_image_url:
+                try:
+                    delete_from_do(activity.answer_image_url)
+                    stats["files_deleted"] += 1
+                except Exception as e:
+                    stats["errors"].append(
+                        f"Error deleting activity answer image {activity.answer_image_url}: {e}"
                     )
 
         # Delete all embeddings by chapter_id from all collections

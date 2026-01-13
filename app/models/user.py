@@ -33,9 +33,9 @@ class User(BaseModel, table=True):
         sa_column=Column(Integer, ForeignKey("mediums.id", ondelete="SET NULL")),
     )
 
-    class_level: Optional["ClassLevel"] = Relationship()
-    board: Optional["Board"] = Relationship()
-    medium: Optional["Medium"] = Relationship()
+    class_level: "ClassLevel" = Relationship()
+    board: "Board" = Relationship()
+    medium: "Medium" = Relationship()
     llm_usages: List["LLMUsage"] = Relationship(
         back_populates="user", cascade_delete=True
     )

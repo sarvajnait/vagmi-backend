@@ -18,6 +18,7 @@ from app.api.v1.files import router as files_router
 from app.api.v1.llm_resources import router as llm_resources_router
 from app.api.v1.student_content import router as student_content_router
 from app.api.v1.subscriptions import router as subscriptions_router
+from app.api.v1.activities import router as activities_router
 
 api_router = APIRouter()
 
@@ -46,6 +47,7 @@ api_router.include_router(
 api_router.include_router(
     subscriptions_router, prefix="/subscriptions", tags=["subscriptions"]
 )
+api_router.include_router(activities_router, prefix="/activities", tags=["activities"])
 api_router.include_router(admin_router, prefix="/admin/auth", tags=["admin"])
 api_router.include_router(admin_users_router, prefix="/admin/users", tags=["admin"])
 

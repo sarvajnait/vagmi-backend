@@ -1,0 +1,203 @@
+import json
+import re
+from typing import Any, Dict, List, Optional
+
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks
+
+
+TOPIC_COUNT = 6
+MAX_TOPIC_CHARS = 12000
+MAX_CONTEXT_CHARS = 15000
+
+
+def _extract_json(text: str) -> Dict[str, Any]:
+    if not text:
+        raise ValueError("Empty AI response")
+
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not match:
+        raise ValueError("No JSON object found in AI response")
+
+    return json.loads(match.group(0))
+
+
+def _get_llm() -> ChatGoogleGenerativeAI:
+    return ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        temperature=0.2,
+        streaming=False,
+    )
+
+
+def _split_text(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
+    return splitter.split_text(text)
+
+
+def get_full_chapter_text(chapter_id: int) -> str:
+    docs = vector_store_textbooks.similarity_search(
+        query="",
+        k=1000,
+        filter={"chapter_id": str(chapter_id)},
+    )
+    if not docs:
+        return ""
+
+    docs.sort(key=lambda d: d.metadata.get("chunk_index", 0))
+    raw_chunks = [d.page_content for d in docs]
+    return merge_chunks_remove_overlap(raw_chunks, overlap_chars=200)
+
+
+def get_topic_context(chapter_id: int, topic: str) -> str:
+    docs = vector_store_textbooks.similarity_search(
+        query=topic,
+        k=6,
+        filter={"chapter_id": str(chapter_id)},
+    )
+    if not docs:
+        return ""
+    return "\n\n".join([doc.page_content for doc in docs])
+
+
+def _generate_topics_from_text(text: str) -> List[Dict[str, str]]:
+    system_prompt = (
+        "You are an assistant that outputs strict JSON only. "
+        "Do not include markdown or extra text."
+    )
+    human_prompt = (
+        "From the chapter text below, extract exactly 6 key topics. "
+        "Return JSON in this schema:\n"
+        '{ "topics": [ { "title": "...", "summary": "..." } ] }\n'
+        "Keep titles short and summaries 1 sentence.\n\n"
+        f"CHAPTER TEXT:\n{text}"
+    )
+
+    llm = _get_llm()
+    response = llm.invoke(
+        [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+    )
+    payload = _extract_json(response.content)
+    topics = payload.get("topics", [])
+    return topics if isinstance(topics, list) else []
+
+
+def _consolidate_topics(topics: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    system_prompt = (
+        "You are an assistant that outputs strict JSON only. "
+        "Do not include markdown or extra text."
+    )
+    human_prompt = (
+        "Given the topic candidates below, deduplicate and return exactly 6 "
+        "most important topics. Return JSON in this schema:\n"
+        '{ "topics": [ { "title": "...", "summary": "..." } ] }\n'
+        f"TOPICS:\n{json.dumps(topics)}"
+    )
+
+    llm = _get_llm()
+    response = llm.invoke(
+        [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+    )
+    payload = _extract_json(response.content)
+    topics_out = payload.get("topics", [])
+    return topics_out if isinstance(topics_out, list) else []
+
+
+def generate_topics(chapter_id: int) -> List[Dict[str, str]]:
+    chapter_text = get_full_chapter_text(chapter_id)
+    if not chapter_text:
+        return []
+
+    if len(chapter_text) <= MAX_TOPIC_CHARS:
+        topics = _generate_topics_from_text(chapter_text)
+        return topics[:TOPIC_COUNT]
+
+    chunks = _split_text(chapter_text, chunk_size=MAX_TOPIC_CHARS, chunk_overlap=400)
+    all_topics: List[Dict[str, str]] = []
+    for chunk in chunks[:5]:
+        all_topics.extend(_generate_topics_from_text(chunk))
+
+    consolidated = _consolidate_topics(all_topics)
+    return consolidated[:TOPIC_COUNT]
+
+
+def generate_activities(
+    chapter_id: int,
+    topic_title: str,
+    mcq_count: int,
+    descriptive_count: int,
+) -> List[Dict[str, Any]]:
+    topic_context = get_topic_context(chapter_id, topic_title)
+    if not topic_context:
+        chapter_text = get_full_chapter_text(chapter_id)
+        topic_context = chapter_text[:MAX_CONTEXT_CHARS]
+
+    system_prompt = (
+        "You are an assistant that outputs strict JSON only. "
+        "Do not include markdown or extra text."
+    )
+    human_prompt = (
+        "Generate activities based on the topic and context below. "
+        "Return JSON in this schema:\n"
+        '{ "activities": [ { "type": "mcq", "question_text": "...", '
+        '"options": ["a","b","c","d"], "correct_option_index": 1 }, '
+        '{ "type": "descriptive", "question_text": "...", "answer_text": "..." } ] }\n'
+        f"Requirements:\n- mcq_count: {mcq_count}\n"
+        f"- descriptive_count: {descriptive_count}\n"
+        "- Keep questions clear and concise.\n\n"
+        f"TOPIC: {topic_title}\n\n"
+        f"CONTEXT:\n{topic_context}"
+    )
+
+    llm = _get_llm()
+    response = llm.invoke(
+        [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+    )
+    payload = _extract_json(response.content)
+    activities = payload.get("activities", [])
+    return activities if isinstance(activities, list) else []
+
+
+def normalize_activity(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    activity_type = str(item.get("type", "")).strip().lower()
+    question_text = str(item.get("question_text", "")).strip()
+
+    if not activity_type or not question_text:
+        return None
+
+    if activity_type == "mcq":
+        options = item.get("options", [])
+        if not isinstance(options, list) or len(options) != 4:
+            return None
+        cleaned_options = [str(opt).strip() for opt in options]
+        if any(not opt for opt in cleaned_options):
+            return None
+        correct_option_index = item.get("correct_option_index")
+        if correct_option_index not in [1, 2, 3, 4]:
+            return None
+        return {
+            "type": "mcq",
+            "question_text": question_text,
+            "options": cleaned_options,
+            "correct_option_index": int(correct_option_index),
+            "answer_text": None,
+        }
+
+    if activity_type == "descriptive":
+        answer_text = str(item.get("answer_text", "")).strip()
+        if not answer_text:
+            return None
+        return {
+            "type": "descriptive",
+            "question_text": question_text,
+            "options": None,
+            "correct_option_index": None,
+            "answer_text": answer_text,
+        }
+
+    return None
