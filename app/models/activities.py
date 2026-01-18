@@ -11,13 +11,38 @@ from app.models.academic_hierarchy import Chapter
 from app.models.user import User
 
 
+class ActivityGroupBase(SQLModel):
+    name: str = Field(max_length=255)
+    chapter_id: int = Field(foreign_key="chapters.id")
+    timer_seconds: Optional[int] = Field(default=None, description="Time limit in seconds for this activity group")
+    sort_order: Optional[int] = Field(default=None)
+
+
+class ActivityGroup(ActivityGroupBase, BaseModel, table=True):
+    __tablename__ = "activity_groups"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chapter: Chapter = Relationship(back_populates="activity_groups")
+    activities: list["ChapterActivity"] = Relationship(back_populates="activity_group", cascade_delete=True)
+
+
+class ActivityGroupCreate(ActivityGroupBase):
+    pass
+
+
+class ActivityGroupRead(ActivityGroupBase):
+    id: int
+
+
 class ChapterActivityBase(SQLModel):
+    activity_group_id: int = Field(foreign_key="activity_groups.id")
     chapter_id: int = Field(foreign_key="chapters.id")
     type: str = Field(max_length=20)
     question_text: str
     options: Optional[list[str]] = Field(default=None, sa_column=Column(ARRAY(String)))
     correct_option_index: Optional[int] = None
     answer_text: Optional[str] = None
+    answer_description: Optional[str] = None
     answer_image_url: Optional[str] = None
     is_published: bool = Field(default=True)
     sort_order: Optional[int] = Field(default=None)
@@ -28,6 +53,7 @@ class ChapterActivity(ChapterActivityBase, BaseModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     chapter: Chapter = Relationship(back_populates="activities")
+    activity_group: ActivityGroup = Relationship(back_populates="activities")
 
 
 class ChapterActivityCreate(ChapterActivityBase):

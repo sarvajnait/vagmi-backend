@@ -15,6 +15,7 @@ from app.models import (
     ActivityPlaySession,
     ActivityAnswer,
     ActivityGenerationJob,
+    ActivityGroup,
 )
 from app.models.user import User
 from app.models.admin import Admin
@@ -101,12 +102,14 @@ def validate_activity_payload(
 
 @router.post("/")
 async def create_activity(
+    activity_group_id: int = Form(...),
     chapter_id: int = Form(...),
     type: str = Form(...),
     question_text: str = Form(...),
     options: Optional[list[str]] = Form(None),
     correct_option_index: Optional[int] = Form(None),
     answer_text: Optional[str] = Form(None),
+    answer_description: Optional[str] = Form(None),
     is_published: bool = Form(True),
     sort_order: Optional[int] = Form(None),
     answer_image: UploadFile | None = File(None),
@@ -117,13 +120,19 @@ async def create_activity(
         if not chapter:
             raise HTTPException(status_code=404, detail="Chapter not found")
 
+        activity_group = await session.get(ActivityGroup, activity_group_id)
+        if not activity_group:
+            raise HTTPException(status_code=404, detail="Activity group not found")
+        if activity_group.chapter_id != chapter_id:
+            raise HTTPException(status_code=400, detail="Activity group does not belong to this chapter")
+
         cleaned_options = [opt.strip() for opt in options] if options else None
         validate_activity_payload(type, cleaned_options, correct_option_index, answer_text)
 
         if sort_order is None:
             _result = await session.exec(
                 select(func.max(ChapterActivity.sort_order)).where(
-                    ChapterActivity.chapter_id == chapter_id
+                    ChapterActivity.activity_group_id == activity_group_id
                 )
             )
             max_order = _result.first()
@@ -137,12 +146,14 @@ async def create_activity(
             answer_image_url = upload_to_do(answer_image, do_path)
 
         activity = ChapterActivity(
+            activity_group_id=activity_group_id,
             chapter_id=chapter_id,
             type=type,
             question_text=question_text.strip(),
             options=cleaned_options if type == "mcq" else None,
             correct_option_index=correct_option_index if type == "mcq" else None,
             answer_text=answer_text.strip() if type == "descriptive" else None,
+            answer_description=answer_description.strip() if answer_description else None,
             answer_image_url=answer_image_url,
             is_published=is_published,
             sort_order=sort_order,
@@ -161,12 +172,15 @@ async def create_activity(
 
 @router.get("/")
 async def get_activities(
+    activity_group_id: Optional[int] = None,
     chapter_id: Optional[int] = None,
     status: str = Query("published"),
     session: AsyncSession = Depends(get_session),
 ):
     try:
         query = select(ChapterActivity)
+        if activity_group_id is not None:
+            query = query.where(ChapterActivity.activity_group_id == activity_group_id)
         if chapter_id is not None:
             query = query.where(ChapterActivity.chapter_id == chapter_id)
         if status == "published":
@@ -196,12 +210,14 @@ async def get_activity(
 @router.put("/{activity_id}")
 async def update_activity(
     activity_id: int,
+    activity_group_id: Optional[int] = Form(None),
     chapter_id: Optional[int] = Form(None),
     type: Optional[str] = Form(None),
     question_text: Optional[str] = Form(None),
     options: Optional[list[str]] = Form(None),
     correct_option_index: Optional[int] = Form(None),
     answer_text: Optional[str] = Form(None),
+    answer_description: Optional[str] = Form(None),
     is_published: Optional[bool] = Form(None),
     sort_order: Optional[int] = Form(None),
     answer_image: UploadFile | None = File(None),
@@ -217,6 +233,16 @@ async def update_activity(
             if not chapter:
                 raise HTTPException(status_code=404, detail="Chapter not found")
             activity.chapter_id = chapter_id
+
+        if activity_group_id is not None:
+            activity_group = await session.get(ActivityGroup, activity_group_id)
+            if not activity_group:
+                raise HTTPException(status_code=404, detail="Activity group not found")
+            # Ensure group belongs to the same chapter
+            effective_chapter_id = chapter_id if chapter_id is not None else activity.chapter_id
+            if activity_group.chapter_id != effective_chapter_id:
+                raise HTTPException(status_code=400, detail="Activity group does not belong to this chapter")
+            activity.activity_group_id = activity_group_id
 
         effective_type = type or activity.type
         cleaned_options = [opt.strip() for opt in options] if options else activity.options
@@ -236,6 +262,9 @@ async def update_activity(
 
         if question_text is not None:
             activity.question_text = question_text.strip()
+
+        if answer_description is not None:
+            activity.answer_description = answer_description.strip() if answer_description else None
 
         if sort_order is not None:
             activity.sort_order = sort_order
@@ -298,7 +327,7 @@ async def delete_activity(
 @router.put("/order")
 async def reorder_activities(
     payload: OrderUpdate,
-    chapter_id: int = Query(...),
+    activity_group_id: int = Query(...),
     session: AsyncSession = Depends(get_session),
 ):
     if len(payload.ids) != len(set(payload.ids)):
@@ -306,13 +335,13 @@ async def reorder_activities(
 
     _result = await session.exec(
         select(ChapterActivity).where(
-            ChapterActivity.chapter_id == chapter_id,
+            ChapterActivity.activity_group_id == activity_group_id,
             ChapterActivity.id.in_(payload.ids),
         )
     )
     activities = _result.all()
     if len(activities) != len(payload.ids):
-        raise HTTPException(status_code=400, detail="Invalid activity ids for chapter")
+        raise HTTPException(status_code=400, detail="Invalid activity ids for group")
 
     activity_map = {activity.id: activity for activity in activities}
     for index, activity_id in enumerate(payload.ids, start=1):
@@ -517,15 +546,20 @@ async def submit_answer(
                 if activity.options and activity.correct_option_index
                 else None
             ),
+            "answer_description": activity.answer_description,
         }
     else:
-        correct_answer = {"answer_text": activity.answer_text}
+        correct_answer = {
+            "answer_text": activity.answer_text,
+            "answer_description": activity.answer_description,
+        }
 
     return {
         "data": {
             "is_correct": is_correct,
             "score": score,
             "correct_answer": correct_answer,
+            "answer_image_url": activity.answer_image_url,
             "next_activity": next_activity.dict() if next_activity else None,
             "completed": completed,
             "session": play_session.dict(),
@@ -561,10 +595,14 @@ async def get_session_report(
                     if activity.options and activity.correct_option_index
                     else None
                 ),
+                "answer_description": activity.answer_description,
             }
             submitted = {"selected_option_index": answer.selected_option_index}
         else:
-            correct = {"answer_text": activity.answer_text}
+            correct = {
+                "answer_text": activity.answer_text,
+                "answer_description": activity.answer_description,
+            }
             submitted = {"submitted_answer_text": answer.submitted_answer_text}
 
         answers.append(

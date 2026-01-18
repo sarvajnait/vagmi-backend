@@ -17,7 +17,7 @@ from app.models.student_content import (
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.models.activities import ChapterActivity
+    from app.models.activities import ChapterActivity, ActivityGroup
 
 
 # --------------------
@@ -172,6 +172,9 @@ class Chapter(ChapterBase, BaseModel, table=True):
         back_populates="chapter", cascade_delete=True
     )
     activities: List["ChapterActivity"] = Relationship(
+        back_populates="chapter", cascade_delete=True
+    )
+    activity_groups: List["ActivityGroup"] = Relationship(
         back_populates="chapter", cascade_delete=True
     )
 
