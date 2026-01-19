@@ -8,7 +8,14 @@
       "Bash(.venv/Scripts/alembic upgrade:*)",
       "Bash(.venv/Scripts/alembic revision:*)",
       "Bash(python -m py_compile:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(grep:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(uv run python:*)"
     ],
     "deny": [],
     "ask": []

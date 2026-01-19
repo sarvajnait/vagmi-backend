@@ -189,22 +189,7 @@ async def delete_activity_group(
         if not group:
             raise HTTPException(status_code=404, detail="Activity group not found")
 
-        # Check if group has activities
-        _count_result = await session.exec(
-            select(func.count()).where(
-                ChapterActivity.activity_group_id == group_id
-            )
-        )
-        activity_count = _count_result.first()
-        if isinstance(activity_count, tuple):
-            activity_count = activity_count[0]
-
-        if activity_count and activity_count > 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot delete group with {activity_count} activities. Delete activities first."
-            )
-
+        # Cascade delete will automatically remove all associated activities
         await session.delete(group)
         await session.commit()
         return {"message": "Activity group deleted"}

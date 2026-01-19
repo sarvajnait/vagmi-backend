@@ -33,14 +33,40 @@ async def _run_topics_job(job: ActivityGenerationJob, session):
 
 
 async def _run_activities_job(job: ActivityGenerationJob, session):
+    from app.models import ActivityGroup
+
     chapter_id = job.payload.get("chapter_id")
     topic_title = job.payload.get("topic_title")
     mcq_count = int(job.payload.get("mcq_count", 0))
     descriptive_count = int(job.payload.get("descriptive_count", 0))
+    activity_group_id = job.payload.get("activity_group_id")
 
     chapter = await session.get(Chapter, chapter_id)
     if not chapter:
         raise ValueError("Chapter not found")
+
+    # If no activity_group_id provided, create a new group for these activities
+    if not activity_group_id:
+        # Find the max sort_order for activity groups in this chapter
+        _group_result = await session.exec(
+            select(func.max(ActivityGroup.sort_order)).where(
+                ActivityGroup.chapter_id == chapter_id
+            )
+        )
+        max_group_order = _group_result.first()
+        if isinstance(max_group_order, tuple):
+            max_group_order = max_group_order[0]
+        next_group_order = (max_group_order or 0) + 1
+
+        # Create new activity group
+        activity_group = ActivityGroup(
+            name=topic_title or "Generated Activities",
+            chapter_id=chapter_id,
+            sort_order=next_group_order,
+        )
+        session.add(activity_group)
+        await session.flush()
+        activity_group_id = activity_group.id
 
     raw = generate_activities(chapter_id, topic_title, mcq_count, descriptive_count)
     normalized = []
@@ -57,7 +83,7 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
 
     _result = await session.exec(
         select(func.max(ChapterActivity.sort_order)).where(
-            ChapterActivity.chapter_id == chapter_id
+            ChapterActivity.activity_group_id == activity_group_id
         )
     )
     max_order = _result.first()
@@ -68,6 +94,7 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
     created_ids = []
     for item in normalized:
         activity = ChapterActivity(
+            activity_group_id=activity_group_id,
             chapter_id=chapter_id,
             type=item["type"],
             question_text=item["question_text"],
@@ -83,7 +110,7 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
         await session.flush()
         created_ids.append(activity.id)
 
-    job.result = {"created_ids": created_ids, "count": len(created_ids)}
+    job.result = {"created_ids": created_ids, "count": len(created_ids), "activity_group_id": activity_group_id}
 
 
 async def run_activity_job(job_id: int):
