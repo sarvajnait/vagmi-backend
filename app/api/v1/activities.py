@@ -49,6 +49,7 @@ class GenerateActivitiesRequest(BaseModel):
     topic_title: str
     mcq_count: int = 5
     descriptive_count: int = 5
+    activity_group_id: Optional[int] = None
 
 
 class PublishRequest(BaseModel):
@@ -699,6 +700,7 @@ async def ai_generate_activities(
             "topic_title": payload.topic_title,
             "mcq_count": mcq_count,
             "descriptive_count": descriptive_count,
+            "activity_group_id": payload.activity_group_id,
         },
     )
     session.add(job)
