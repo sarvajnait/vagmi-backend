@@ -1,7 +1,5 @@
-from __future__ import annotations
-
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from sqlalchemy import ARRAY, String, Column, DateTime, ForeignKey, UniqueConstraint, func
 from sqlmodel import Field, Relationship, SQLModel
@@ -23,7 +21,7 @@ class ActivityGroup(ActivityGroupBase, BaseModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     chapter: Chapter = Relationship(back_populates="activity_groups")
-    activities: list["ChapterActivity"] = Relationship(back_populates="activity_group", cascade_delete=True)
+    activities: List["ChapterActivity"] = Relationship(back_populates="activity_group", cascade_delete=True)
 
 
 class ActivityGroupCreate(ActivityGroupBase):
