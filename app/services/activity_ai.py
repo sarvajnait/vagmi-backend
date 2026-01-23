@@ -156,9 +156,9 @@ def generate_activities(
         "Cover ALL the given topics in the generated questions. "
         "Return JSON in this schema:\n"
         '{ "activities": [ { "type": "mcq", "question_text": "...", '
-        '"options": ["a","b","c","d"], "correct_option_index": 1 (1-based: 1=first option, 2=second, 3=third, 4=fourth) }, '
+        '"options": ["a","b","c","d"], "correct_answer": "b" }, '
         '{ "type": "descriptive", "question_text": "...", "answer_text": "..." } ] }\n'
-        "IMPORTANT: correct_option_index is 1-based (1 means the first option, NOT zero-based).\n"
+        "IMPORTANT: correct_answer must be the EXACT text of one of the options.\n"
         f"Requirements:\n- mcq_count: {mcq_count}\n"
         f"- descriptive_count: {descriptive_count}\n"
         "- Keep questions clear and concise.\n"
@@ -190,12 +190,17 @@ def normalize_activity(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         cleaned_options = [str(opt).strip() for opt in options]
         if any(not opt for opt in cleaned_options):
             return None
-        correct_option_index = item.get("correct_option_index")
-        # Handle LLM returning 0-based index
-        if correct_option_index == 0:
-            correct_option_index = 1
-        if correct_option_index not in [1, 2, 3, 4]:
-            return None
+        correct_answer = str(item.get("correct_answer", "")).strip()
+        # Match correct_answer text to option index
+        try:
+            correct_option_index = cleaned_options.index(correct_answer) + 1
+        except ValueError:
+            # Fallback: try case-insensitive match
+            lower_options = [o.lower() for o in cleaned_options]
+            try:
+                correct_option_index = lower_options.index(correct_answer.lower()) + 1
+            except ValueError:
+                return None
         return {
             "type": "mcq",
             "question_text": question_text,
