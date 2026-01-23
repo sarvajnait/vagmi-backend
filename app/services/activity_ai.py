@@ -128,29 +128,41 @@ def generate_topics(chapter_id: int) -> List[Dict[str, str]]:
 
 def generate_activities(
     chapter_id: int,
-    topic_title: str,
+    topic_titles: List[str],
     mcq_count: int,
     descriptive_count: int,
 ) -> List[Dict[str, Any]]:
-    topic_context = get_topic_context(chapter_id, topic_title)
-    if not topic_context:
+    # Gather context from all topics
+    all_context_parts = []
+    for title in topic_titles:
+        ctx = get_topic_context(chapter_id, title)
+        if ctx:
+            all_context_parts.append(ctx)
+
+    if not all_context_parts:
         chapter_text = get_full_chapter_text(chapter_id)
         topic_context = chapter_text[:MAX_CONTEXT_CHARS]
+    else:
+        topic_context = "\n\n".join(all_context_parts)[:MAX_CONTEXT_CHARS]
+
+    topics_str = ", ".join(topic_titles)
 
     system_prompt = (
         "You are an assistant that outputs strict JSON only. "
         "Do not include markdown or extra text."
     )
     human_prompt = (
-        "Generate activities based on the topic and context below. "
+        "Generate activities based on the topics and context below. "
+        "Cover ALL the given topics in the generated questions. "
         "Return JSON in this schema:\n"
         '{ "activities": [ { "type": "mcq", "question_text": "...", '
         '"options": ["a","b","c","d"], "correct_option_index": 1 }, '
         '{ "type": "descriptive", "question_text": "...", "answer_text": "..." } ] }\n'
         f"Requirements:\n- mcq_count: {mcq_count}\n"
         f"- descriptive_count: {descriptive_count}\n"
-        "- Keep questions clear and concise.\n\n"
-        f"TOPIC: {topic_title}\n\n"
+        "- Keep questions clear and concise.\n"
+        "- Distribute questions evenly across all topics.\n\n"
+        f"TOPICS: {topics_str}\n\n"
         f"CONTEXT:\n{topic_context}"
     )
 

@@ -46,7 +46,7 @@ class TopicsRequest(BaseModel):
 
 class GenerateActivitiesRequest(BaseModel):
     chapter_id: int
-    topic_title: str
+    topic_titles: list[str] = []
     mcq_count: int = 5
     descriptive_count: int = 5
     activity_group_id: Optional[int] = None
@@ -697,7 +697,7 @@ async def ai_generate_activities(
         status="pending",
         payload={
             "chapter_id": payload.chapter_id,
-            "topic_title": payload.topic_title,
+            "topic_titles": payload.topic_titles,
             "mcq_count": mcq_count,
             "descriptive_count": descriptive_count,
             "activity_group_id": payload.activity_group_id,

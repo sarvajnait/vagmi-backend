@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.models import ActivityGenerationJob, Chapter, ChapterActivity
+from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic
 from app.services.activity_ai import generate_activities, generate_topics, normalize_activity
 from app.services.database import async_session_maker
 
@@ -32,11 +32,53 @@ async def _run_topics_job(job: ActivityGenerationJob, session):
     job.result = {"topics": _clean_topics(topics)}
 
 
+async def _run_topics_save_job(job: ActivityGenerationJob, session):
+    chapter_id = job.payload.get("chapter_id")
+    chapter = await session.get(Chapter, chapter_id)
+    if not chapter:
+        raise ValueError("Chapter not found")
+
+    topics = generate_topics(chapter_id)
+    if not topics:
+        raise ValueError("No chapter content found")
+
+    cleaned = _clean_topics(topics)
+
+    # Get max sort order for existing topics
+    result = await session.exec(
+        select(func.max(Topic.sort_order)).where(Topic.chapter_id == chapter_id)
+    )
+    max_order = result.first()
+    if isinstance(max_order, tuple):
+        max_order = max_order[0]
+    next_order = (max_order or 0) + 1
+
+    created_ids = []
+    for t in cleaned:
+        topic = Topic(
+            title=t["title"],
+            summary=t.get("summary"),
+            chapter_id=chapter_id,
+            sort_order=next_order,
+        )
+        next_order += 1
+        session.add(topic)
+        await session.flush()
+        created_ids.append(topic.id)
+
+    job.result = {"topics": cleaned, "created_ids": created_ids, "count": len(created_ids)}
+
+
 async def _run_activities_job(job: ActivityGenerationJob, session):
     from app.models import ActivityGroup
 
     chapter_id = job.payload.get("chapter_id")
-    topic_title = job.payload.get("topic_title")
+    topic_titles = job.payload.get("topic_titles", [])
+    # Backward compat: support old single topic_title field
+    if not topic_titles:
+        single = job.payload.get("topic_title")
+        if single:
+            topic_titles = [single]
     mcq_count = int(job.payload.get("mcq_count", 0))
     descriptive_count = int(job.payload.get("descriptive_count", 0))
     activity_group_id = job.payload.get("activity_group_id")
@@ -59,8 +101,9 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
         next_group_order = (max_group_order or 0) + 1
 
         # Create new activity group
+        group_name = ", ".join(topic_titles) if topic_titles else "Generated Activities"
         activity_group = ActivityGroup(
-            name=topic_title or "Generated Activities",
+            name=group_name[:255],
             chapter_id=chapter_id,
             sort_order=next_group_order,
         )
@@ -68,7 +111,7 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
         await session.flush()
         activity_group_id = activity_group.id
 
-    raw = generate_activities(chapter_id, topic_title, mcq_count, descriptive_count)
+    raw = generate_activities(chapter_id, topic_titles, mcq_count, descriptive_count)
     normalized = []
     for item in raw:
         normalized_item = normalize_activity(item)
@@ -127,6 +170,8 @@ async def run_activity_job(job_id: int):
         try:
             if job.job_type == "topics":
                 await _run_topics_job(job, session)
+            elif job.job_type == "topics_save":
+                await _run_topics_save_job(job, session)
             elif job.job_type == "activities":
                 await _run_activities_job(job, session)
             else:

@@ -9,6 +9,28 @@ from app.models.academic_hierarchy import Chapter
 from app.models.user import User
 
 
+class TopicBase(SQLModel):
+    title: str = Field(max_length=255)
+    summary: Optional[str] = Field(default=None)
+    chapter_id: int = Field(foreign_key="chapters.id")
+    sort_order: Optional[int] = Field(default=None)
+
+
+class Topic(TopicBase, BaseModel, table=True):
+    __tablename__ = "topics"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chapter: Chapter = Relationship()
+
+
+class TopicCreate(TopicBase):
+    pass
+
+
+class TopicRead(TopicBase):
+    id: int
+
+
 class ActivityGroupBase(SQLModel):
     name: str = Field(max_length=255)
     chapter_id: int = Field(foreign_key="chapters.id")
