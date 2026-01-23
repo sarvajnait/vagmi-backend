@@ -156,8 +156,9 @@ def generate_activities(
         "Cover ALL the given topics in the generated questions. "
         "Return JSON in this schema:\n"
         '{ "activities": [ { "type": "mcq", "question_text": "...", '
-        '"options": ["a","b","c","d"], "correct_option_index": 1 }, '
+        '"options": ["a","b","c","d"], "correct_option_index": 1 (1-based: 1=first option, 2=second, 3=third, 4=fourth) }, '
         '{ "type": "descriptive", "question_text": "...", "answer_text": "..." } ] }\n'
+        "IMPORTANT: correct_option_index is 1-based (1 means the first option, NOT zero-based).\n"
         f"Requirements:\n- mcq_count: {mcq_count}\n"
         f"- descriptive_count: {descriptive_count}\n"
         "- Keep questions clear and concise.\n"
@@ -190,6 +191,9 @@ def normalize_activity(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if any(not opt for opt in cleaned_options):
             return None
         correct_option_index = item.get("correct_option_index")
+        # Handle LLM returning 0-based index
+        if correct_option_index == 0:
+            correct_option_index = 1
         if correct_option_index not in [1, 2, 3, 4]:
             return None
         return {
