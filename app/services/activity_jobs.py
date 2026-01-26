@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic
+from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic, Medium
 from app.services.activity_ai import generate_activities, generate_topics, normalize_activity
 from app.services.database import async_session_maker
 
@@ -28,9 +28,10 @@ async def _run_topics_job(job: ActivityGenerationJob, session):
         raise ValueError("Chapter not found")
 
     subject = await session.get(Subject, chapter.subject_id)
-    subject_name = subject.name if subject else ""
+    medium = await session.get(Medium, subject.medium_id) if subject else None
+    medium_name = medium.name if medium else ""
 
-    topics = generate_topics(chapter_id, subject_name)
+    topics = generate_topics(chapter_id, medium_name)
     if not topics:
         raise ValueError("No chapter content found")
 
@@ -46,9 +47,10 @@ async def _run_topics_save_job(job: ActivityGenerationJob, session):
         raise ValueError("Chapter not found")
 
     subject = await session.get(Subject, chapter.subject_id)
-    subject_name = subject.name if subject else ""
+    medium = await session.get(Medium, subject.medium_id) if subject else None
+    medium_name = medium.name if medium else ""
 
-    topics = generate_topics(chapter_id, subject_name)
+    topics = generate_topics(chapter_id, medium_name)
     if not topics:
         raise ValueError("No chapter content found")
 
@@ -98,7 +100,8 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
         raise ValueError("Chapter not found")
 
     subject = await session.get(Subject, chapter.subject_id)
-    subject_name = subject.name if subject else ""
+    medium = await session.get(Medium, subject.medium_id) if subject else None
+    medium_name = medium.name if medium else ""
 
     # If no activity_group_id provided, create a new group for these activities
     if not activity_group_id:
@@ -124,7 +127,7 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
         await session.flush()
         activity_group_id = activity_group.id
 
-    raw = generate_activities(chapter_id, topic_titles, mcq_count, descriptive_count, subject_name)
+    raw = generate_activities(chapter_id, topic_titles, mcq_count, descriptive_count, medium_name)
     normalized = []
     for item in raw:
         normalized_item = normalize_activity(item)

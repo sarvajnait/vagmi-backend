@@ -65,17 +65,17 @@ def get_topic_context(chapter_id: int, topic: str) -> str:
     return "\n\n".join([doc.page_content for doc in docs])
 
 
-def _generate_topics_from_text(text: str, subject_name: str = "") -> List[Dict[str, str]]:
+def _generate_topics_from_text(text: str, medium_name: str = "") -> List[Dict[str, str]]:
     system_prompt = (
         "You are an assistant that outputs strict JSON only. "
         "Do not include markdown or extra text."
     )
 
     language_instruction = ""
-    subject_lower = subject_name.lower()
-    if any(lang in subject_lower for lang in ["english", "hindi", "kannada", "malayalam", "tamil", "telugu", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
-        lang_name = subject_name
-        language_instruction = f"\nIMPORTANT: This is a {lang_name} language subject. Generate topic titles and summaries in {lang_name}."
+    medium_lower = medium_name.lower()
+    if any(lang in medium_lower for lang in ["english", "hindi", "kannada", "malayalam", "tamil", "telugu", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
+        lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
+        language_instruction = f"\nIMPORTANT: This is {lang_name} medium. Generate topic titles and summaries in {lang_name} language."
 
     human_prompt = (
         "From the chapter text below, extract exactly 6 key topics. "
@@ -83,7 +83,7 @@ def _generate_topics_from_text(text: str, subject_name: str = "") -> List[Dict[s
         '{ "topics": [ { "title": "...", "summary": "..." } ] }\n'
         "Keep titles short and summaries 1 sentence."
         f"{language_instruction}\n\n"
-        f"SUBJECT: {subject_name}\n"
+        f"MEDIUM: {medium_name}\n"
         f"CHAPTER TEXT:\n{text}"
     )
 
@@ -117,19 +117,19 @@ def _consolidate_topics(topics: List[Dict[str, str]]) -> List[Dict[str, str]]:
     return topics_out if isinstance(topics_out, list) else []
 
 
-def generate_topics(chapter_id: int, subject_name: str = "") -> List[Dict[str, str]]:
+def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, str]]:
     chapter_text = get_full_chapter_text(chapter_id)
     if not chapter_text:
         return []
 
     if len(chapter_text) <= MAX_TOPIC_CHARS:
-        topics = _generate_topics_from_text(chapter_text, subject_name)
+        topics = _generate_topics_from_text(chapter_text, medium_name)
         return topics[:TOPIC_COUNT]
 
     chunks = _split_text(chapter_text, chunk_size=MAX_TOPIC_CHARS, chunk_overlap=400)
     all_topics: List[Dict[str, str]] = []
     for chunk in chunks[:5]:
-        all_topics.extend(_generate_topics_from_text(chunk, subject_name))
+        all_topics.extend(_generate_topics_from_text(chunk, medium_name))
 
     consolidated = _consolidate_topics(all_topics)
     return consolidated[:TOPIC_COUNT]
@@ -140,7 +140,7 @@ def generate_activities(
     topic_titles: List[str],
     mcq_count: int,
     descriptive_count: int,
-    subject_name: str = "",
+    medium_name: str = "",
 ) -> List[Dict[str, Any]]:
     # Gather context from all topics
     all_context_parts = []
@@ -165,13 +165,13 @@ def generate_activities(
     # Language-specific instruction and examples
     language_instruction = ""
     examples = ""
-    subject_lower = subject_name.lower()
-    if any(lang in subject_lower for lang in ["kannada", "malayalam", "tamil", "telugu", "hindi", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
-        lang_name = subject_name
-        language_instruction = f"\n\nCRITICAL: This is {lang_name} subject. ALL questions, options, and answers MUST be in {lang_name} language."
+    medium_lower = medium_name.lower()
+    if any(lang in medium_lower for lang in ["kannada", "malayalam", "tamil", "telugu", "hindi", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
+        lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
+        language_instruction = f"\n\nCRITICAL: This is {lang_name} medium. ALL questions, options, and answers MUST be in {lang_name} language."
         examples = f'''
 
-Example for {lang_name}:
+Example for {lang_name} medium:
 {{
   "type": "mcq",
   "question_text": "[Question in {lang_name}]",
@@ -194,7 +194,7 @@ Example for {lang_name}:
         "- Keep questions clear and concise.\n"
         "- Distribute questions evenly across all topics."
         f"{language_instruction}\n\n"
-        f"SUBJECT: {subject_name}\n"
+        f"MEDIUM: {medium_name}\n"
         f"TOPICS: {topics_str}\n\n"
         f"CONTEXT:\n{topic_context}"
     )
@@ -260,7 +260,7 @@ def evaluate_descriptive_answer(
     question: str,
     correct_answer: str,
     user_answer: str,
-    subject_name: str = "",
+    medium_name: str = "",
 ) -> Dict[str, Any]:
     """
     Evaluate a descriptive answer using AI.
@@ -277,10 +277,10 @@ def evaluate_descriptive_answer(
     )
 
     language_instruction = ""
-    subject_lower = subject_name.lower()
-    if any(lang in subject_lower for lang in ["kannada", "malayalam", "tamil", "telugu", "hindi", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
-        lang_name = subject_name
-        language_instruction = f"\n\nIMPORTANT: Generate feedback in {lang_name} language since this is a {lang_name} subject."
+    medium_lower = medium_name.lower()
+    if any(lang in medium_lower for lang in ["kannada", "malayalam", "tamil", "telugu", "hindi", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
+        lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
+        language_instruction = f"\n\nIMPORTANT: Generate feedback in {lang_name} language since this is {lang_name} medium."
 
     human_prompt = (
         "Evaluate the student's answer compared to the correct answer. "
@@ -292,7 +292,7 @@ def evaluate_descriptive_answer(
         "- Start each feedback point with 'Good:' or 'Improve:'\n"
         "- Be specific and constructive\n"
         f"{language_instruction}\n\n"
-        f"SUBJECT: {subject_name}\n"
+        f"MEDIUM: {medium_name}\n"
         f"QUESTION: {question}\n\n"
         f"CORRECT ANSWER:\n{correct_answer}\n\n"
         f"STUDENT'S ANSWER:\n{user_answer}"

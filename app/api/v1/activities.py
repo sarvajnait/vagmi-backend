@@ -18,6 +18,7 @@ from app.models import (
     ActivityGenerationJob,
     ActivityGroup,
     Subject,
+    Medium,
 )
 from app.models.user import User
 from app.models.admin import Admin
@@ -488,17 +489,18 @@ async def submit_answer(
         if not payload.submitted_answer_text or not payload.submitted_answer_text.strip():
             raise HTTPException(status_code=400, detail="Answer text is required")
 
-        # Get chapter and subject for context
+        # Get chapter, subject, and medium for context
         chapter = await session.get(Chapter, activity.chapter_id)
         subject = await session.get(Subject, chapter.subject_id) if chapter else None
-        subject_name = subject.name if subject else ""
+        medium = await session.get(Medium, subject.medium_id) if subject else None
+        medium_name = medium.name if medium else ""
 
         # Use AI to evaluate the answer
         evaluation = evaluate_descriptive_answer(
             question=activity.question_text,
             correct_answer=activity.answer_text or "",
             user_answer=payload.submitted_answer_text,
-            subject_name=subject_name,
+            medium_name=medium_name,
         )
 
         score = evaluation["score"]
