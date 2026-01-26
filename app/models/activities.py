@@ -118,6 +118,7 @@ class ActivityAnswer(BaseModel, table=True):
     submitted_answer_text: Optional[str] = None
     is_correct: Optional[bool] = None
     score: int = Field(default=0)
+    ai_feedback: Optional[str] = Field(default=None)
     answered_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),

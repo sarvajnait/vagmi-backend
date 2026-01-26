@@ -254,3 +254,66 @@ def normalize_activity(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
 
     return None
+
+
+def evaluate_descriptive_answer(
+    question: str,
+    correct_answer: str,
+    user_answer: str,
+    subject_name: str = "",
+) -> Dict[str, Any]:
+    """
+    Evaluate a descriptive answer using AI.
+
+    Returns:
+        {
+            "score": int (0-100),
+            "feedback": List[str] (3-4 bullet points)
+        }
+    """
+    system_prompt = (
+        "You are an assistant that outputs strict JSON only. "
+        "Do not include markdown or extra text."
+    )
+
+    language_instruction = ""
+    subject_lower = subject_name.lower()
+    if any(lang in subject_lower for lang in ["kannada", "malayalam", "tamil", "telugu", "hindi", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
+        lang_name = subject_name
+        language_instruction = f"\n\nIMPORTANT: Generate feedback in {lang_name} language since this is a {lang_name} subject."
+
+    human_prompt = (
+        "Evaluate the student's answer compared to the correct answer. "
+        "Return JSON in this schema:\n"
+        '{ "score": 75, "feedback": ["Good: ...", "Good: ...", "Improve: ...", "Improve: ..."] }\n\n'
+        "Requirements:\n"
+        "- score: 0-100 based on correctness, completeness, and clarity\n"
+        "- feedback: Exactly 3-4 bullet points\n"
+        "- Start each feedback point with 'Good:' or 'Improve:'\n"
+        "- Be specific and constructive\n"
+        f"{language_instruction}\n\n"
+        f"SUBJECT: {subject_name}\n"
+        f"QUESTION: {question}\n\n"
+        f"CORRECT ANSWER:\n{correct_answer}\n\n"
+        f"STUDENT'S ANSWER:\n{user_answer}"
+    )
+
+    llm = _get_llm()
+    response = llm.invoke(
+        [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+    )
+    payload = _extract_json(response.content)
+
+    score = int(payload.get("score", 0))
+    feedback = payload.get("feedback", [])
+
+    if not isinstance(feedback, list):
+        feedback = []
+
+    # Ensure score is in valid range
+    score = max(0, min(100, score))
+
+    return {
+        "score": score,
+        "feedback": feedback,
+    }

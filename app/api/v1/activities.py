@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -16,10 +17,12 @@ from app.models import (
     ActivityAnswer,
     ActivityGenerationJob,
     ActivityGroup,
+    Subject,
 )
 from app.models.user import User
 from app.models.admin import Admin
 from app.services.activity_jobs import enqueue_activity_job
+from app.services.activity_ai import evaluate_descriptive_answer
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do
 
@@ -472,6 +475,7 @@ async def submit_answer(
     if _existing_result.first():
         raise HTTPException(status_code=400, detail="Answer already submitted")
 
+    ai_feedback = None
     if activity.type == "mcq":
         if payload.selected_option_index not in {1, 2, 3, 4}:
             raise HTTPException(
@@ -480,12 +484,28 @@ async def submit_answer(
         is_correct = payload.selected_option_index == activity.correct_option_index
         score = 1 if is_correct else 0
     else:
-        submitted = normalize_text(payload.submitted_answer_text)
-        expected = normalize_text(activity.answer_text)
-        if not submitted:
+        # Descriptive answer - use AI evaluation
+        if not payload.submitted_answer_text or not payload.submitted_answer_text.strip():
             raise HTTPException(status_code=400, detail="Answer text is required")
-        is_correct = submitted == expected if expected else False
-        score = 1 if is_correct else 0
+
+        # Get chapter and subject for context
+        chapter = await session.get(Chapter, activity.chapter_id)
+        subject = await session.get(Subject, chapter.subject_id) if chapter else None
+        subject_name = subject.name if subject else ""
+
+        # Use AI to evaluate the answer
+        evaluation = evaluate_descriptive_answer(
+            question=activity.question_text,
+            correct_answer=activity.answer_text or "",
+            user_answer=payload.submitted_answer_text,
+            subject_name=subject_name,
+        )
+
+        score = evaluation["score"]
+        ai_feedback = json.dumps(evaluation["feedback"])
+
+        # Consider answer correct if score >= 70
+        is_correct = score >= 70
 
     answer = ActivityAnswer(
         session_id=session_id,
@@ -494,6 +514,7 @@ async def submit_answer(
         submitted_answer_text=payload.submitted_answer_text,
         is_correct=is_correct,
         score=score,
+        ai_feedback=ai_feedback,
     )
     session.add(answer)
 
@@ -555,17 +576,21 @@ async def submit_answer(
             "answer_description": activity.answer_description,
         }
 
-    return {
-        "data": {
-            "is_correct": is_correct,
-            "score": score,
-            "correct_answer": correct_answer,
-            "answer_image_url": activity.answer_image_url,
-            "next_activity": next_activity.dict() if next_activity else None,
-            "completed": completed,
-            "session": play_session.dict(),
-        }
+    response_data = {
+        "is_correct": is_correct,
+        "score": score,
+        "correct_answer": correct_answer,
+        "answer_image_url": activity.answer_image_url,
+        "next_activity": next_activity.dict() if next_activity else None,
+        "completed": completed,
+        "session": play_session.dict(),
     }
+
+    # Add AI feedback for descriptive answers
+    if ai_feedback:
+        response_data["ai_feedback"] = json.loads(ai_feedback)
+
+    return {"data": response_data}
 
 
 @router.get("/sessions/{session_id}/report")
