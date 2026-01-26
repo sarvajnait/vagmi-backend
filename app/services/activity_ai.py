@@ -65,16 +65,25 @@ def get_topic_context(chapter_id: int, topic: str) -> str:
     return "\n\n".join([doc.page_content for doc in docs])
 
 
-def _generate_topics_from_text(text: str) -> List[Dict[str, str]]:
+def _generate_topics_from_text(text: str, subject_name: str = "") -> List[Dict[str, str]]:
     system_prompt = (
         "You are an assistant that outputs strict JSON only. "
         "Do not include markdown or extra text."
     )
+
+    language_instruction = ""
+    subject_lower = subject_name.lower()
+    if any(lang in subject_lower for lang in ["english", "hindi", "kannada", "malayalam", "tamil", "telugu", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
+        lang_name = subject_name
+        language_instruction = f"\nIMPORTANT: This is a {lang_name} language subject. Generate topic titles and summaries in {lang_name}."
+
     human_prompt = (
         "From the chapter text below, extract exactly 6 key topics. "
         "Return JSON in this schema:\n"
         '{ "topics": [ { "title": "...", "summary": "..." } ] }\n'
-        "Keep titles short and summaries 1 sentence.\n\n"
+        "Keep titles short and summaries 1 sentence."
+        f"{language_instruction}\n\n"
+        f"SUBJECT: {subject_name}\n"
         f"CHAPTER TEXT:\n{text}"
     )
 
@@ -108,19 +117,19 @@ def _consolidate_topics(topics: List[Dict[str, str]]) -> List[Dict[str, str]]:
     return topics_out if isinstance(topics_out, list) else []
 
 
-def generate_topics(chapter_id: int) -> List[Dict[str, str]]:
+def generate_topics(chapter_id: int, subject_name: str = "") -> List[Dict[str, str]]:
     chapter_text = get_full_chapter_text(chapter_id)
     if not chapter_text:
         return []
 
     if len(chapter_text) <= MAX_TOPIC_CHARS:
-        topics = _generate_topics_from_text(chapter_text)
+        topics = _generate_topics_from_text(chapter_text, subject_name)
         return topics[:TOPIC_COUNT]
 
     chunks = _split_text(chapter_text, chunk_size=MAX_TOPIC_CHARS, chunk_overlap=400)
     all_topics: List[Dict[str, str]] = []
     for chunk in chunks[:5]:
-        all_topics.extend(_generate_topics_from_text(chunk))
+        all_topics.extend(_generate_topics_from_text(chunk, subject_name))
 
     consolidated = _consolidate_topics(all_topics)
     return consolidated[:TOPIC_COUNT]
@@ -131,6 +140,7 @@ def generate_activities(
     topic_titles: List[str],
     mcq_count: int,
     descriptive_count: int,
+    subject_name: str = "",
 ) -> List[Dict[str, Any]]:
     # Gather context from all topics
     all_context_parts = []
@@ -151,6 +161,25 @@ def generate_activities(
         "You are an assistant that outputs strict JSON only. "
         "Do not include markdown or extra text."
     )
+
+    # Language-specific instruction and examples
+    language_instruction = ""
+    examples = ""
+    subject_lower = subject_name.lower()
+    if any(lang in subject_lower for lang in ["kannada", "malayalam", "tamil", "telugu", "hindi", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
+        lang_name = subject_name
+        language_instruction = f"\n\nCRITICAL: This is {lang_name} subject. ALL questions, options, and answers MUST be in {lang_name} language."
+        examples = f'''
+
+Example for {lang_name}:
+{{
+  "type": "mcq",
+  "question_text": "[Question in {lang_name}]",
+  "options": ["[Option 1 in {lang_name}]", "[Option 2 in {lang_name}]", "[Option 3 in {lang_name}]", "[Option 4 in {lang_name}]"],
+  "correct_answer": "[Correct option text in {lang_name}]"
+}}
+'''
+
     human_prompt = (
         "Generate activities based on the topics and context below. "
         "Cover ALL the given topics in the generated questions. "
@@ -159,10 +188,13 @@ def generate_activities(
         '"options": ["a","b","c","d"], "correct_answer": "b" }, '
         '{ "type": "descriptive", "question_text": "...", "answer_text": "..." } ] }\n'
         "IMPORTANT: correct_answer must be the EXACT text of one of the options.\n"
+        f"{examples}"
         f"Requirements:\n- mcq_count: {mcq_count}\n"
         f"- descriptive_count: {descriptive_count}\n"
         "- Keep questions clear and concise.\n"
-        "- Distribute questions evenly across all topics.\n\n"
+        "- Distribute questions evenly across all topics."
+        f"{language_instruction}\n\n"
+        f"SUBJECT: {subject_name}\n"
         f"TOPICS: {topics_str}\n\n"
         f"CONTEXT:\n{topic_context}"
     )

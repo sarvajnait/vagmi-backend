@@ -20,12 +20,17 @@ def _clean_topics(topics: List[Dict[str, Any]]) -> List[Dict[str, str]]:
 
 
 async def _run_topics_job(job: ActivityGenerationJob, session):
+    from app.models import Subject
+
     chapter_id = job.payload.get("chapter_id")
     chapter = await session.get(Chapter, chapter_id)
     if not chapter:
         raise ValueError("Chapter not found")
 
-    topics = generate_topics(chapter_id)
+    subject = await session.get(Subject, chapter.subject_id)
+    subject_name = subject.name if subject else ""
+
+    topics = generate_topics(chapter_id, subject_name)
     if not topics:
         raise ValueError("No chapter content found")
 
@@ -33,12 +38,17 @@ async def _run_topics_job(job: ActivityGenerationJob, session):
 
 
 async def _run_topics_save_job(job: ActivityGenerationJob, session):
+    from app.models import Subject
+
     chapter_id = job.payload.get("chapter_id")
     chapter = await session.get(Chapter, chapter_id)
     if not chapter:
         raise ValueError("Chapter not found")
 
-    topics = generate_topics(chapter_id)
+    subject = await session.get(Subject, chapter.subject_id)
+    subject_name = subject.name if subject else ""
+
+    topics = generate_topics(chapter_id, subject_name)
     if not topics:
         raise ValueError("No chapter content found")
 
@@ -70,7 +80,7 @@ async def _run_topics_save_job(job: ActivityGenerationJob, session):
 
 
 async def _run_activities_job(job: ActivityGenerationJob, session):
-    from app.models import ActivityGroup
+    from app.models import ActivityGroup, Subject
 
     chapter_id = job.payload.get("chapter_id")
     topic_titles = job.payload.get("topic_titles", [])
@@ -86,6 +96,9 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
     chapter = await session.get(Chapter, chapter_id)
     if not chapter:
         raise ValueError("Chapter not found")
+
+    subject = await session.get(Subject, chapter.subject_id)
+    subject_name = subject.name if subject else ""
 
     # If no activity_group_id provided, create a new group for these activities
     if not activity_group_id:
@@ -111,7 +124,7 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
         await session.flush()
         activity_group_id = activity_group.id
 
-    raw = generate_activities(chapter_id, topic_titles, mcq_count, descriptive_count)
+    raw = generate_activities(chapter_id, topic_titles, mcq_count, descriptive_count, subject_name)
     normalized = []
     for item in raw:
         normalized_item = normalize_activity(item)
