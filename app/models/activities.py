@@ -20,7 +20,7 @@ class Topic(TopicBase, BaseModel, table=True):
     __tablename__ = "topics"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    chapter: Chapter = Relationship()
+    chapter: Chapter = Relationship(back_populates="topics")
 
 
 class TopicCreate(TopicBase):
