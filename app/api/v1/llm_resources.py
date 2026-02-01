@@ -15,6 +15,7 @@ from app.utils.cleanup import delete_embeddings_by_resource_id
 import uuid
 from app.utils.files import compress_image
 from langchain_core.documents import Document
+from app.services.pdf_ocr import extract_text_from_pdf_with_fallback
 
 router = APIRouter()
 platform = EducationPlatform()
@@ -43,9 +44,8 @@ def sort_ordering(model):
 def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
     """Upload textbook to vector store with clean educational chunks."""
     try:
-        loader = PyPDFLoader(file_url)
-
-        pages = loader.load()
+        # Use fallback extraction (standard PDF loader + Gemini OCR for Kannada/garbled text)
+        pages = extract_text_from_pdf_with_fallback(file_url)
 
         # 3. Chunk ACROSS pages (not page-by-page)
         text_splitter = RecursiveCharacterTextSplitter(

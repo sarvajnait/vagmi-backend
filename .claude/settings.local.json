@@ -15,7 +15,12 @@
       "Bash(grep:*)",
       "Bash(git checkout:*)",
       "Bash(git push:*)",
-      "Bash(uv run python:*)"
+      "Bash(uv run python:*)",
+      "Bash(poetry run alembic revision:*)",
+      "Bash(where:*)",
+      "Bash(d:projectsvagmi-backend.venvScriptspython.exe -m alembic revision --autogenerate -m \"Add ai_feedback to activity_answers\")",
+      "Bash(\".venv/Scripts/python.exe\" -m alembic revision --autogenerate -m \"Add ai_feedback to activity_answers\")",
+      "Bash(\".venv/Scripts/python.exe\" -m alembic upgrade head)"
     ],
     "deny": [],
     "ask": []
