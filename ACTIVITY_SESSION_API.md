@@ -63,7 +63,7 @@ Submit an answer for the current question and get the next one.
 }
 ```
 
-**Response:**
+**Response (MCQ):**
 ```json
 {
   "data": {
@@ -86,6 +86,42 @@ Submit an answer for the current question and get the next one.
       "id": 123,
       "correct_count": 1,
       "score": 1,
+      ...
+    }
+  }
+}
+```
+
+**Response (Descriptive with AI Feedback):**
+```json
+{
+  "data": {
+    "is_correct": true,
+    "score": 85,
+    "correct_answer": {
+      "answer_text": "Photosynthesis is the process by which plants convert light energy into chemical energy...",
+      "answer_description": "Detailed explanation of photosynthesis"
+    },
+    "answer_image_url": "https://...",
+    "ai_feedback": {
+      "score": 85,
+      "feedback": [
+        "Good: Correctly explained the basic concept",
+        "Good: Mentioned light energy conversion",
+        "Improve: Could add more details about chlorophyll",
+        "Improve: Missing information about carbon dioxide"
+      ]
+    },
+    "next_activity": {
+      "id": 3,
+      "type": "mcq",
+      ...
+    },
+    "completed": false,
+    "session": {
+      "id": 123,
+      "correct_count": 2,
+      "score": 86,
       ...
     }
   }
@@ -143,8 +179,9 @@ View all answers after completing the session.
 - **No Re-submission:** Cannot answer the same question twice in a session (unique constraint)
 - **Immediate Feedback:** Get correctness and correct answer after each submission
 - **Auto-completion:** Session automatically marked complete when all questions answered
-- **AI Evaluation:** Descriptive answers evaluated by AI with feedback and scoring (0-100)
+- **AI Evaluation for Descriptive Questions:** Descriptive answers are evaluated by AI immediately upon submission with detailed feedback (3-4 bullet points) and scoring (0-100)
 - **Progress Tracking:** Session tracks correct count and total score in real-time
+- **Language-Aware Feedback:** AI feedback is generated in the medium's language (e.g., Kannada, Hindi, Tamil, etc.)
 
 ## Activity Types
 
@@ -155,10 +192,13 @@ View all answers after completing the session.
 
 ### Descriptive
 - Must provide `submitted_answer_text`
-- AI evaluates answer against correct answer
+- AI evaluates answer immediately against correct answer
 - Score: 0-100 based on AI evaluation
 - Considered correct if score >= 70
-- Returns AI feedback with evaluation details
+- Returns `ai_feedback` object with:
+  - `score`: Numerical score (0-100)
+  - `feedback`: Array of 3-4 bullet points (each starting with "Good:" or "Improve:")
+- Feedback is language-aware (matches the medium's language)
 
 ## Error Cases
 
