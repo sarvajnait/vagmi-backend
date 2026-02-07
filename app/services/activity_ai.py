@@ -41,18 +41,46 @@ def _split_text(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
 
 
 def get_full_chapter_text(chapter_id: int) -> str:
-    # Use a generic query instead of empty string to avoid embedding errors
-    docs = vector_store_textbooks.similarity_search(
-        query="chapter content",
-        k=1000,
-        filter={"chapter_id": str(chapter_id)},
-    )
-    if not docs:
-        return ""
+    # Query database directly to get all documents for chapter without needing similarity search
+    from sqlalchemy import text
+    from app.core.config import settings
+    import psycopg
 
-    docs.sort(key=lambda d: d.metadata.get("chunk_index", 0))
-    raw_chunks = [d.page_content for d in docs]
-    return merge_chunks_remove_overlap(raw_chunks, overlap_chars=200)
+    try:
+        with psycopg.connect(settings.POSTGRES_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT document, cmetadata
+                    FROM langchain_pg_embedding
+                    WHERE collection_id = (
+                        SELECT uuid FROM langchain_pg_collection WHERE name = 'llm_textbooks'
+                    )
+                    AND cmetadata->>'chapter_id' = %s
+                    ORDER BY (cmetadata->>'chunk_index')::int NULLS LAST
+                    """,
+                    (str(chapter_id),)
+                )
+                rows = cur.fetchall()
+
+                if not rows:
+                    return ""
+
+                raw_chunks = [row[0] for row in rows]
+                return merge_chunks_remove_overlap(raw_chunks, overlap_chars=200)
+    except Exception as e:
+        logger.error(f"Error fetching chapter text directly: {e}")
+        # Fallback to similarity search with non-empty query
+        docs = vector_store_textbooks.similarity_search(
+            query="chapter content",
+            k=1000,
+            filter={"chapter_id": str(chapter_id)},
+        )
+        if not docs:
+            return ""
+        docs.sort(key=lambda d: d.metadata.get("chunk_index", 0))
+        raw_chunks = [d.page_content for d in docs]
+        return merge_chunks_remove_overlap(raw_chunks, overlap_chars=200)
 
 
 def get_topic_context(chapter_id: int, topic: str) -> str:
@@ -66,7 +94,9 @@ def get_topic_context(chapter_id: int, topic: str) -> str:
     return "\n\n".join([doc.page_content for doc in docs])
 
 
-def _generate_topics_from_text(text: str, medium_name: str = "") -> List[Dict[str, str]]:
+def _generate_topics_from_text(
+    text: str, medium_name: str = ""
+) -> List[Dict[str, str]]:
     system_prompt = (
         "You are an assistant that outputs strict JSON only. "
         "Do not include markdown or extra text."
@@ -74,7 +104,22 @@ def _generate_topics_from_text(text: str, medium_name: str = "") -> List[Dict[st
 
     language_instruction = ""
     medium_lower = medium_name.lower()
-    if any(lang in medium_lower for lang in ["english", "hindi", "kannada", "malayalam", "tamil", "telugu", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
+    if any(
+        lang in medium_lower
+        for lang in [
+            "english",
+            "hindi",
+            "kannada",
+            "malayalam",
+            "tamil",
+            "telugu",
+            "sanskrit",
+            "urdu",
+            "bengali",
+            "marathi",
+            "gujarati",
+        ]
+    ):
         lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
         language_instruction = f"\nIMPORTANT: This is {lang_name} medium. Generate topic titles and summaries in {lang_name} language."
 
@@ -167,10 +212,24 @@ def generate_activities(
     language_instruction = ""
     examples = ""
     medium_lower = medium_name.lower()
-    if any(lang in medium_lower for lang in ["kannada", "malayalam", "tamil", "telugu", "hindi", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
+    if any(
+        lang in medium_lower
+        for lang in [
+            "kannada",
+            "malayalam",
+            "tamil",
+            "telugu",
+            "hindi",
+            "sanskrit",
+            "urdu",
+            "bengali",
+            "marathi",
+            "gujarati",
+        ]
+    ):
         lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
         language_instruction = f"\n\nCRITICAL: This is {lang_name} medium. ALL questions, options, and answers MUST be in {lang_name} language."
-        examples = f'''
+        examples = f"""
 
 Example for {lang_name} medium:
 {{
@@ -179,7 +238,7 @@ Example for {lang_name} medium:
   "options": ["[Option 1 in {lang_name}]", "[Option 2 in {lang_name}]", "[Option 3 in {lang_name}]", "[Option 4 in {lang_name}]"],
   "correct_answer": "[Correct option text in {lang_name}]"
 }}
-'''
+"""
 
     human_prompt = (
         "Generate activities based on the topics and context below. "
@@ -279,7 +338,21 @@ def evaluate_descriptive_answer(
 
     language_instruction = ""
     medium_lower = medium_name.lower()
-    if any(lang in medium_lower for lang in ["kannada", "malayalam", "tamil", "telugu", "hindi", "sanskrit", "urdu", "bengali", "marathi", "gujarati"]):
+    if any(
+        lang in medium_lower
+        for lang in [
+            "kannada",
+            "malayalam",
+            "tamil",
+            "telugu",
+            "hindi",
+            "sanskrit",
+            "urdu",
+            "bengali",
+            "marathi",
+            "gujarati",
+        ]
+    ):
         lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
         language_instruction = f"\n\nIMPORTANT: Generate feedback in {lang_name} language since this is {lang_name} medium."
 
