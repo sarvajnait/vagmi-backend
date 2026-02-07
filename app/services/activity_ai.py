@@ -41,8 +41,9 @@ def _split_text(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
 
 
 def get_full_chapter_text(chapter_id: int) -> str:
+    # Use a generic query instead of empty string to avoid embedding errors
     docs = vector_store_textbooks.similarity_search(
-        query="",
+        query="chapter content",
         k=1000,
         filter={"chapter_id": str(chapter_id)},
     )

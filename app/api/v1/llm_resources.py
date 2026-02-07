@@ -12,6 +12,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.utils.files import upload_to_do, delete_from_do
 from app.utils.cleanup import delete_embeddings_by_resource_id
+from app.utils.kannada_converter import convert_kannada_text
 import uuid
 from app.utils.files import compress_image
 from langchain_core.documents import Document
@@ -47,6 +48,10 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
 
         pages = loader.load()
 
+        # Convert Kannada text from legacy ASCII to Unicode
+        for page in pages:
+            page.page_content = convert_kannada_text(page.page_content)
+
         # 3. Chunk ACROSS pages (not page-by-page)
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1500,
@@ -62,7 +67,7 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
             return 0
 
         # 4. Attach metadata
-        for doc in documents:
+        for idx, doc in enumerate(documents):
             doc.metadata.update(
                 {
                     "chapter_id": str(metadata["chapter_id"]),
@@ -70,6 +75,7 @@ def process_textbook_upload(file_url: str, metadata: Dict[str, str]) -> int:
                     "file_url": metadata["file_url"],
                     "textbook_id": str(metadata["textbook_id"]),
                     "content_type": "textbook",
+                    "chunk_index": idx,
                 }
             )
 
@@ -789,6 +795,10 @@ async def upload_llm_note(
         loader = PyPDFLoader(file_url)
         pages = loader.load()
 
+        # Convert Kannada text from legacy ASCII to Unicode
+        for page in pages:
+            page.page_content = convert_kannada_text(page.page_content)
+
         filtered_pages = [p for p in pages]
 
         if not filtered_pages:
@@ -972,6 +982,11 @@ async def update_llm_note(
 
             loader = PyPDFLoader(note.file_url)
             pages = loader.load()
+
+            # Convert Kannada text from legacy ASCII to Unicode
+            for page in pages:
+                page.page_content = convert_kannada_text(page.page_content)
+
             filtered_pages = [p for p in pages]
             if not filtered_pages:
                 logger.warning("No valid LLM note content found")
@@ -1053,6 +1068,10 @@ async def upload_qa_pattern(
 
         loader = PyPDFLoader(file_url)
         pages = loader.load()
+
+        # Convert Kannada text from legacy ASCII to Unicode
+        for page in pages:
+            page.page_content = convert_kannada_text(page.page_content)
 
         # ---- quality filter (Q&A tolerant but safe) ----
         def is_valid_qa_page(text: str) -> bool:
@@ -1247,6 +1266,10 @@ async def update_qa_pattern(
 
             loader = PyPDFLoader(pattern.file_url)
             pages = loader.load()
+
+            # Convert Kannada text from legacy ASCII to Unicode
+            for page in pages:
+                page.page_content = convert_kannada_text(page.page_content)
 
             def is_valid_qa_page(text: str) -> bool:
                 text = text.strip()
