@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from loguru import logger
 
 from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks
 
@@ -47,7 +48,10 @@ def get_full_chapter_text(chapter_id: int) -> str:
     import psycopg
 
     try:
-        with psycopg.connect(settings.POSTGRES_URL) as conn:
+        # Convert SQLAlchemy URL to psycopg format (remove +psycopg suffix)
+        postgres_url = settings.POSTGRES_URL.replace("postgresql+psycopg://", "postgresql://")
+
+        with psycopg.connect(postgres_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -59,7 +63,7 @@ def get_full_chapter_text(chapter_id: int) -> str:
                     AND cmetadata->>'chapter_id' = %s
                     ORDER BY (cmetadata->>'chunk_index')::int NULLS LAST
                     """,
-                    (str(chapter_id),)
+                    (str(chapter_id),),
                 )
                 rows = cur.fetchall()
 
@@ -72,7 +76,7 @@ def get_full_chapter_text(chapter_id: int) -> str:
         logger.error(f"Error fetching chapter text directly: {e}")
         # Fallback to similarity search with non-empty query
         docs = vector_store_textbooks.similarity_search(
-            query="chapter content",
+            query="",
             k=1000,
             filter={"chapter_id": str(chapter_id)},
         )

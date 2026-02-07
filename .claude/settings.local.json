@@ -20,7 +20,9 @@
       "Bash(where:*)",
       "Bash(d:projectsvagmi-backend.venvScriptspython.exe -m alembic revision --autogenerate -m \"Add ai_feedback to activity_answers\")",
       "Bash(\".venv/Scripts/python.exe\" -m alembic revision --autogenerate -m \"Add ai_feedback to activity_answers\")",
-      "Bash(\".venv/Scripts/python.exe\" -m alembic upgrade head)"
+      "Bash(\".venv/Scripts/python.exe\" -m alembic upgrade head)",
+      "Bash(ls:*)",
+      "Bash(psql:*)"
     ],
     "deny": [],
     "ask": []
