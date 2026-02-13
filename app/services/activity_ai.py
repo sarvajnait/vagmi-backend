@@ -10,7 +10,6 @@ from loguru import logger
 from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks
 
 
-TOPIC_COUNT = 6
 MAX_TOPIC_CHARS = 12000
 MAX_CONTEXT_CHARS = 15000
 
@@ -102,8 +101,8 @@ def _generate_topics_from_text(
     text: str, medium_name: str = ""
 ) -> List[Dict[str, str]]:
     system_prompt = (
-        "You are an assistant that outputs strict JSON only. "
-        "Do not include markdown or extra text."
+        "Act as an expert Curriculum Designer. "
+        "Your output must be strict JSON only — no markdown, no prose, no extra text."
     )
 
     language_instruction = ""
@@ -128,8 +127,17 @@ def _generate_topics_from_text(
         language_instruction = f"\nIMPORTANT: This is {lang_name} medium. Generate topic titles and summaries in {lang_name} language."
 
     human_prompt = (
-        "From the chapter text below, extract exactly 6 key topics. "
-        "Return JSON in this schema:\n"
+        "Analyze the provided chapter text and extract a comprehensive list of key topics "
+        "that represent the entire scope of the content.\n\n"
+        "Requirements:\n"
+        "- Complete Coverage: Ensure that every concept, definition, and principle mentioned "
+        "in the chapter is mapped to one of the topics. No part of the chapter should be left out.\n"
+        "- Dynamic Count: Do not limit yourself to a specific number of topics. Extract as many "
+        "as necessary to achieve 100% coverage, but keep each topic distinct to avoid redundancy.\n"
+        "- Topic Definition: Each topic must be named accurately according to the text and defined clearly.\n"
+        "- Exhaustive Logic: The final list of topics must be so thorough that if you were to generate "
+        "'Important Questions' for each one, the resulting question bank would cover the entire chapter without any gaps.\n\n"
+        "Return JSON in this schema only:\n"
         '{ "topics": [ { "title": "...", "summary": "..." } ] }\n'
         "Keep titles short and summaries 1 sentence."
         f"{language_instruction}\n\n"
@@ -148,13 +156,20 @@ def _generate_topics_from_text(
 
 def _consolidate_topics(topics: List[Dict[str, str]]) -> List[Dict[str, str]]:
     system_prompt = (
-        "You are an assistant that outputs strict JSON only. "
-        "Do not include markdown or extra text."
+        "Act as an expert Curriculum Designer. "
+        "Your output must be strict JSON only — no markdown, no prose, no extra text."
     )
     human_prompt = (
-        "Given the topic candidates below, deduplicate and return exactly 6 "
-        "most important topics. Return JSON in this schema:\n"
-        '{ "topics": [ { "title": "...", "summary": "..." } ] }\n'
+        "Given the topic candidates below extracted from different parts of a chapter, "
+        "deduplicate and consolidate them into the final comprehensive topic list.\n\n"
+        "Requirements:\n"
+        "- Complete Coverage: Preserve all distinct concepts — do not drop topics that represent unique content.\n"
+        "- Dynamic Count: Return as many topics as needed for full coverage. Do not impose a fixed limit.\n"
+        "- Deduplication: Merge topics that refer to the same concept into one well-named topic.\n"
+        "- Exhaustive Logic: The final list must be thorough enough that generating 'Important Questions' "
+        "for each topic would cover the entire chapter without gaps.\n\n"
+        "Return JSON in this schema only:\n"
+        '{ "topics": [ { "title": "...", "summary": "..." } ] }\n\n'
         f"TOPICS:\n{json.dumps(topics)}"
     )
 
@@ -173,16 +188,14 @@ def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, st
         return []
 
     if len(chapter_text) <= MAX_TOPIC_CHARS:
-        topics = _generate_topics_from_text(chapter_text, medium_name)
-        return topics[:TOPIC_COUNT]
+        return _generate_topics_from_text(chapter_text, medium_name)
 
     chunks = _split_text(chapter_text, chunk_size=MAX_TOPIC_CHARS, chunk_overlap=400)
     all_topics: List[Dict[str, str]] = []
     for chunk in chunks[:5]:
         all_topics.extend(_generate_topics_from_text(chunk, medium_name))
 
-    consolidated = _consolidate_topics(all_topics)
-    return consolidated[:TOPIC_COUNT]
+    return _consolidate_topics(all_topics)
 
 
 def generate_activities(
@@ -208,8 +221,9 @@ def generate_activities(
     topics_str = ", ".join(topic_titles)
 
     system_prompt = (
-        "You are an assistant that outputs strict JSON only. "
-        "Do not include markdown or extra text."
+        "You are an expert Pedagogy & Assessment Design AI. "
+        "Your task is to generate high-quality, exam-standard activities in strict JSON format. "
+        "Return ONLY a JSON object. No markdown, no prose."
     )
 
     # Language-specific instruction and examples
@@ -245,18 +259,19 @@ Example for {lang_name} medium:
 """
 
     human_prompt = (
-        "Generate activities based on the topics and context below. "
-        "Cover ALL the given topics in the generated questions. "
+        f"Generate {mcq_count} MCQs and {descriptive_count} Descriptive questions "
+        "based on the provided TOPICS and CONTEXT.\n\n"
+        "Core Constraints:\n"
+        "- Zero-Gap Coverage: Every topic listed in the TOPICS section must be covered by at least one activity.\n"
+        "- Cognitive Depth: Distribute questions across Bloom's Taxonomy (Recall, Understanding, and Application).\n"
+        "- Distractor Quality: For MCQs, provide plausible distractors (wrong options). "
+        "Avoid 'None of the above' unless absolutely necessary.\n"
+        "- IMPORTANT: correct_answer must be the EXACT text of one of the options.\n\n"
         "Return JSON in this schema:\n"
         '{ "activities": [ { "type": "mcq", "question_text": "...", '
         '"options": ["a","b","c","d"], "correct_answer": "b" }, '
         '{ "type": "descriptive", "question_text": "...", "answer_text": "..." } ] }\n'
-        "IMPORTANT: correct_answer must be the EXACT text of one of the options.\n"
         f"{examples}"
-        f"Requirements:\n- mcq_count: {mcq_count}\n"
-        f"- descriptive_count: {descriptive_count}\n"
-        "- Keep questions clear and concise.\n"
-        "- Distribute questions evenly across all topics."
         f"{language_instruction}\n\n"
         f"MEDIUM: {medium_name}\n"
         f"TOPICS: {topics_str}\n\n"
