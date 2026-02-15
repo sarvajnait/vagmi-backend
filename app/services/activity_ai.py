@@ -287,6 +287,67 @@ Example for {lang_name} medium:
     return activities if isinstance(activities, list) else []
 
 
+MAX_SUMMARY_CHARS = 20000
+
+
+def generate_chapter_summary(chapter_id: int, medium_name: str = "") -> str:
+    """
+    Generate a structured chapter summary from the full chapter text.
+    Returns a markdown-formatted summary string.
+    Called once during textbook processing and stored as a ChapterArtifact.
+    """
+    chapter_text = get_full_chapter_text(chapter_id)
+    if not chapter_text:
+        return ""
+
+    # Truncate to keep within LLM context limits
+    text = chapter_text[:MAX_SUMMARY_CHARS]
+
+    language_instruction = ""
+    medium_lower = medium_name.lower()
+    if any(
+        lang in medium_lower
+        for lang in [
+            "hindi",
+            "kannada",
+            "malayalam",
+            "tamil",
+            "telugu",
+            "sanskrit",
+            "urdu",
+            "bengali",
+            "marathi",
+            "gujarati",
+        ]
+    ):
+        lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
+        language_instruction = f"\nIMPORTANT: This is {lang_name} medium. Write the entire summary in {lang_name} language."
+
+    system_prompt = (
+        "You are an expert Curriculum Designer. "
+        "Generate a clear, structured chapter summary for students."
+    )
+
+    human_prompt = (
+        "Based on the chapter text below, write a comprehensive chapter summary.\n\n"
+        "Structure:\n"
+        "1. **What this chapter is about** — 2-3 sentences overview\n"
+        "2. **Key Topics** — bullet list of main topics covered\n"
+        "3. **Important Concepts & Definitions** — key terms defined briefly\n"
+        "4. **Key Takeaways** — 3-5 most important points a student must remember\n\n"
+        "Write in clear, student-friendly language. Use markdown formatting."
+        f"{language_instruction}\n\n"
+        f"MEDIUM: {medium_name}\n\n"
+        f"CHAPTER TEXT:\n{text}"
+    )
+
+    llm = _get_llm()
+    response = llm.invoke(
+        [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+    )
+    return response.content.strip()
+
+
 def normalize_activity(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     activity_type = str(item.get("type", "")).strip().lower()
     question_text = str(item.get("question_text", "")).strip()

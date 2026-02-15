@@ -4,8 +4,8 @@ from typing import Any, Dict, List
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic, Medium
-from app.services.activity_ai import generate_activities, generate_topics, normalize_activity
+from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic, Medium, ChapterArtifact
+from app.services.activity_ai import generate_activities, generate_topics, normalize_activity, generate_chapter_summary
 from app.services.database import async_session_maker
 
 
@@ -16,7 +16,7 @@ def _clean_topics(topics: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         summary = str(topic.get("summary", "")).strip()
         if title:
             cleaned.append({"title": title, "summary": summary})
-    return cleaned[:6]
+    return cleaned
 
 
 async def _run_topics_job(job: ActivityGenerationJob, session):
@@ -172,6 +172,79 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
     job.result = {"created_ids": created_ids, "count": len(created_ids), "activity_group_id": activity_group_id}
 
 
+async def _run_textbook_process_job(job: ActivityGenerationJob, session):
+    """
+    Runs embedding + chapter summary generation after a textbook upload.
+    Writes the summary as a ChapterArtifact with artifact_type='chapter_summary'.
+    If an artifact row already exists for this chapter (from a previous upload),
+    it is updated in place so there is always at most one summary per chapter.
+    """
+    from app.api.v1.llm_resources import process_textbook_upload
+    from sqlmodel import select
+
+    chapter_id = job.payload.get("chapter_id")
+    file_url = job.payload.get("file_url")
+    textbook_id = job.payload.get("textbook_id")
+    source_file = job.payload.get("source_file", "")
+
+    chapter = await session.get(Chapter, chapter_id)
+    if not chapter:
+        raise ValueError("Chapter not found")
+
+    from app.models import Subject
+    subject = await session.get(Subject, chapter.subject_id)
+    medium = await session.get(Medium, subject.medium_id) if subject else None
+    medium_name = medium.name if medium else ""
+
+    # 1. Mark artifact as processing (upsert)
+    existing = await session.exec(
+        select(ChapterArtifact).where(
+            ChapterArtifact.chapter_id == chapter_id,
+            ChapterArtifact.artifact_type == "chapter_summary",
+        )
+    )
+    artifact = existing.first()
+    if artifact is None:
+        artifact = ChapterArtifact(
+            chapter_id=chapter_id,
+            artifact_type="chapter_summary",
+            status="processing",
+        )
+        session.add(artifact)
+    else:
+        artifact.status = "processing"
+        artifact.error = None
+    await session.commit()
+    await session.refresh(artifact)
+
+    # 2. Embed the textbook (sync call — runs in thread via asyncio)
+    import asyncio
+    metadata = {
+        "chapter_id": chapter_id,
+        "source_file": source_file,
+        "file_url": file_url,
+        "textbook_id": textbook_id,
+    }
+    doc_count = await asyncio.get_event_loop().run_in_executor(
+        None, process_textbook_upload, file_url, metadata
+    )
+
+    # 3. Generate and store summary
+    summary = await asyncio.get_event_loop().run_in_executor(
+        None, generate_chapter_summary, chapter_id, medium_name
+    )
+
+    artifact.content = summary
+    artifact.status = "completed"
+    session.add(artifact)
+
+    job.result = {
+        "documents_processed": doc_count,
+        "artifact_id": artifact.id,
+        "chapter_id": chapter_id,
+    }
+
+
 async def run_activity_job(job_id: int):
     async with async_session_maker() as session:
         job = await session.get(ActivityGenerationJob, job_id)
@@ -190,6 +263,8 @@ async def run_activity_job(job_id: int):
                 await _run_topics_save_job(job, session)
             elif job.job_type == "activities":
                 await _run_activities_job(job, session)
+            elif job.job_type == "textbook_process":
+                await _run_textbook_process_job(job, session)
             else:
                 raise ValueError("Unsupported job type")
 
@@ -203,4 +278,15 @@ async def run_activity_job(job_id: int):
 
 
 def enqueue_activity_job(job_id: int):
-    asyncio.run(run_activity_job(job_id))
+    """
+    Runs the async job in a dedicated thread with its own event loop,
+    avoiding the 'cannot run nested event loops' error when called from
+    FastAPI's BackgroundTasks (which already runs in an event loop).
+    """
+    import threading
+
+    def _run():
+        asyncio.run(run_activity_job(job_id))
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()

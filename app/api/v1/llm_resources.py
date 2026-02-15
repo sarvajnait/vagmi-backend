@@ -1,11 +1,11 @@
 from typing import Dict, Optional
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile, HTTPException, Form, Query
 from pydantic import BaseModel
 from loguru import logger
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from sqlalchemy import func, case
-from app.models import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern, Chapter
+from app.models import LLMTextbook, AdditionalNotes, LLMImage, LLMNote, QAPattern, Chapter, ActivityGenerationJob, ChapterArtifact
 from app.services.database import get_session
 from app.core.agents.graph import EducationPlatform
 from langchain_community.document_loaders import PyPDFLoader
@@ -133,16 +133,16 @@ def parse_tags(tags: Optional[str]) -> Optional[list[str]]:
 # ============================================================
 @router.post("/textbook")
 async def upload_textbook(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
-    """Upload a textbook to DigitalOcean and add to DB/vector store."""
+    """Upload a textbook to DigitalOcean and queue embedding + summary generation as a background job."""
     try:
-
-        # Upload to DigitalOcean using utility
+        # 1. Upload file to DigitalOcean immediately
         do_path = f"chapters/{chapter_id}/llm-resources/textbooks"
         file_url = upload_to_do(file, do_path)
 
@@ -156,7 +156,7 @@ async def upload_textbook(
             max_order = max_order[0]
         next_order = (max_order or 0) + 1
 
-        # Add textbook to DB
+        # 2. Save textbook record to DB
         textbook = LLMTextbook(
             chapter_id=chapter_id,
             title=title or file.filename,
@@ -169,19 +169,30 @@ async def upload_textbook(
         await session.commit()
         await session.refresh(textbook)
 
-        metadata = {
-            "chapter_id": chapter_id,
-            "source_file": textbook.original_filename or textbook.title,
-            "file_url": file_url,
-            "textbook_id": textbook.id,
-        }
+        # 3. Create a background job for embedding + summary generation
+        job = ActivityGenerationJob(
+            job_type="textbook_process",
+            status="pending",
+            payload={
+                "chapter_id": chapter_id,
+                "textbook_id": textbook.id,
+                "file_url": file_url,
+                "source_file": textbook.original_filename or textbook.title,
+            },
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
 
-        doc_count = process_textbook_upload(file_url, metadata)
+        # 4. Enqueue — returns immediately, processing happens in background
+        from app.services.activity_jobs import enqueue_activity_job
+        background_tasks.add_task(enqueue_activity_job, job.id)
 
         return {
-            "message": "Document uploaded",
-            "metadata": metadata,
-            "documents_processed": doc_count,
+            "message": "Textbook uploaded. Embedding and summary generation in progress.",
+            "textbook_id": textbook.id,
+            "job_id": job.id,
+            "status": "processing",
         }
 
     except Exception as e:
@@ -194,7 +205,7 @@ async def get_textbooks(
     chapter_id: Optional[int] = None,
     session: AsyncSession = Depends(get_session),
 ):
-    """Get textbooks filtered by chapter."""
+    """Get textbooks filtered by chapter, including per-chapter artifact processing status."""
     try:
         query = select(LLMTextbook)
         if chapter_id is not None:
@@ -202,7 +213,28 @@ async def get_textbooks(
         query = query.order_by(*sort_ordering(LLMTextbook))
         _result = await session.exec(query)
         textbooks = _result.all()
-        return {"data": [t.dict() for t in textbooks]}
+
+        # Fetch artifact status per unique chapter so the frontend can show
+        # processing badges without needing a separate API call.
+        chapter_ids = list({t.chapter_id for t in textbooks})
+        artifact_status: dict[int, str] = {}
+        if chapter_ids:
+            art_result = await session.exec(
+                select(ChapterArtifact).where(
+                    ChapterArtifact.chapter_id.in_(chapter_ids),
+                    ChapterArtifact.artifact_type == "chapter_summary",
+                )
+            )
+            for art in art_result.all():
+                artifact_status[art.chapter_id] = art.status
+
+        data = []
+        for t in textbooks:
+            row = t.dict()
+            row["artifact_status"] = artifact_status.get(t.chapter_id)
+            data.append(row)
+
+        return {"data": data}
 
     except Exception as e:
         logger.error(f"Error fetching textbooks: {e}")
@@ -278,6 +310,7 @@ async def delete_textbook(textbook_id: int, session: AsyncSession = Depends(get_
 
 @router.put("/textbook/{textbook_id}")
 async def update_textbook(
+    background_tasks: BackgroundTasks,
     textbook_id: int,
     file: UploadFile | None = File(None),
     chapter_id: Optional[int] = Form(None),
@@ -285,7 +318,7 @@ async def update_textbook(
     description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
-    """Update a textbook's metadata or file and reindex embeddings when needed."""
+    """Update a textbook's metadata or file and reindex embeddings as a background job when needed."""
     try:
         textbook = await session.get(LLMTextbook, textbook_id)
         if not textbook:
@@ -318,23 +351,37 @@ async def update_textbook(
                 textbook.title = file.filename
             should_reindex = True
 
-        if should_reindex:
-            await delete_embeddings_by_resource_id(
-                session, textbook_id, COLLECTION_NAME_TEXTBOOKS, "textbook_id"
-            )
-            metadata = {
-                "chapter_id": textbook.chapter_id,
-                "source_file": textbook.original_filename or textbook.title,
-                "file_url": textbook.file_url,
-                "textbook_id": textbook.id,
-            }
-            process_textbook_upload(textbook.file_url, metadata)
-
         session.add(textbook)
         await session.commit()
         await session.refresh(textbook)
 
-        return {"message": "Textbook updated", "data": textbook.dict()}
+        job_id = None
+        if should_reindex:
+            await delete_embeddings_by_resource_id(
+                session, textbook_id, COLLECTION_NAME_TEXTBOOKS, "textbook_id"
+            )
+            from app.services.activity_jobs import enqueue_activity_job
+            job = ActivityGenerationJob(
+                job_type="textbook_process",
+                status="pending",
+                payload={
+                    "chapter_id": textbook.chapter_id,
+                    "textbook_id": textbook.id,
+                    "file_url": textbook.file_url,
+                    "source_file": textbook.original_filename or textbook.title,
+                },
+            )
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+            background_tasks.add_task(enqueue_activity_job, job.id)
+            job_id = job.id
+
+        response = {"message": "Textbook updated", "data": textbook.dict()}
+        if job_id:
+            response["job_id"] = job_id
+            response["status"] = "processing"
+        return response
 
     except HTTPException:
         raise

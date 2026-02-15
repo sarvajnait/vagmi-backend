@@ -202,37 +202,56 @@ class EducationPlatform:
             }
 
         @tool(response_format="content_and_artifact")
-        def retrieve_full_chapter_textbook():
+        def get_chapter_overview():
             """
-            Retrieve ALL textbook chunks for the current chapter.
-            Use ONLY when the user asks for whole-chapter outputs that require full context
-            (e.g., chapter summary/overview, list of important questions, or any task that
-            depends on scanning the entire chapter rather than a narrow topic).
+            Returns a pre-computed structured summary of the entire chapter.
+            Use ONLY when the student asks for whole-chapter outputs such as:
+            chapter summary, chapter overview, revision of the full chapter,
+            list of important questions from this chapter, or key takeaways.
+            Do NOT use this for narrow topic questions — use retrieve_textbook_with_images instead.
             """
             if not filters.get("chapter_id"):
                 return "No chapter context available.", []
 
-            chapter_id = str(filters["chapter_id"])
+            chapter_id_int = int(filters["chapter_id"])
 
-            docs = vector_store_textbooks.similarity_search(
-                query="",  # empty query
-                k=1000,  # intentionally large
-                filter={"chapter_id": chapter_id},
-            )
+            # Fast path: return pre-computed summary artifact if available
+            try:
+                import psycopg
+                from app.core.config import settings
+                postgres_url = settings.POSTGRES_URL.replace("postgresql+psycopg://", "postgresql://")
+                with psycopg.connect(postgres_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT content FROM chapter_artifacts
+                            WHERE chapter_id = %s
+                              AND artifact_type = 'chapter_summary'
+                              AND status = 'completed'
+                              AND content IS NOT NULL
+                            LIMIT 1
+                            """,
+                            (chapter_id_int,),
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            return row[0], {
+                                "source": "chapter_summary_artifact",
+                                "chapter_id": str(chapter_id_int),
+                            }
+            except Exception as e:
+                logger.warning(f"[ARTIFACT] Could not fetch chapter summary artifact: {e}")
 
-            if not docs:
+            # Fallback: reconstruct from raw chunks via direct SQL
+            from app.services.activity_ai import get_full_chapter_text
+            chapter_text = get_full_chapter_text(chapter_id_int)
+
+            if not chapter_text:
                 return "No textbook content found for this chapter.", []
 
-            docs.sort(key=lambda d: d.metadata.get("chunk_index", 0))
-
-            raw_chunks = [d.page_content for d in docs]
-
-            cleaned_content = merge_chunks_remove_overlap(raw_chunks, overlap_chars=200)
-
-            return cleaned_content, {
+            return chapter_text, {
                 "source": "full_chapter_textbook",
-                "chapter_id": chapter_id,
-                "document_count": len(docs),
+                "chapter_id": str(chapter_id_int),
                 "overlap_cleaned": True,
             }
 
@@ -358,9 +377,9 @@ Never select images after the response has started.
 
 ---
 
-## 📖 FULL CHAPTER CONTEXT (STRICT RULE)
+## 📖 CHAPTER OVERVIEW (STRICT RULE)
 
-### Tool: `retrieve_full_chapter_textbook`
+### Tool: `get_chapter_overview`
 
 Use this tool ONLY when the student asks for whole-chapter outputs such as:
 - chapter summary
@@ -373,20 +392,21 @@ Use this tool ONLY when the student asks for whole-chapter outputs such as:
 - chapter-wise key questions
 - any request that clearly needs scanning the entire chapter
 
+What this tool returns:
+- A **pre-computed structured summary** of the chapter prepared at upload time.
+- It already contains: chapter overview, key topics, important concepts & definitions, and key takeaways.
+- If the summary artifact is not yet ready, it returns the raw chapter text as a fallback.
+
 Rules:
-- You MUST use `retrieve_full_chapter_textbook`
-- Do NOT use similarity-based textbook retrieval
+- You MUST use `get_chapter_overview` for all whole-chapter requests
+- Do NOT use similarity-based textbook retrieval for these requests
 - Do NOT use Q&A or examples
 - Do NOT invent missing content
 
-After retrieving the full chapter:
-- Read all content
-- Identify main themes
-- Produce a structured summary:
-  - What the chapter is about
-  - Key ideas or sections
-  - Important terms (if relevant)
-- If the user asked for important questions, derive them from the full chapter and present a clean numbered list
+After calling this tool:
+- If the result is a pre-computed summary (source: chapter_summary_artifact): present it directly with minimal reformatting — it is already structured for students.
+- If the result is raw chapter text (source: full_chapter_textbook): read it, identify main themes, and produce a structured summary yourself.
+- If the user asked for important questions, derive them from the content and present a clean numbered list.
 
 ---
 
@@ -508,7 +528,7 @@ Start by choosing the right tool. Teach only what helps the student learn.
             model=llm,
             tools=[
                 retrieve_textbook_with_images,
-                retrieve_full_chapter_textbook,
+                get_chapter_overview,
                 retrieve_notes,
                 retrieve_qa_patterns,
                 select_relevant_images,
@@ -518,3 +538,5 @@ Start by choosing the right tool. Teach only what helps the student learn.
         )
 
         return agent
+
+
