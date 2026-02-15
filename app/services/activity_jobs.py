@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic, Medium, ChapterArtifact
+from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic, Medium, ChapterArtifact, StudentTextbook, StudentNotes
 from app.services.activity_ai import generate_activities, generate_topics, normalize_activity, generate_chapter_summary
 from app.services.database import async_session_maker
 
@@ -245,6 +245,46 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
     }
 
 
+async def _run_audio_generation_job(job: ActivityGenerationJob, session):
+    """
+    Generate an audiobook MP3 from a student textbook or notes PDF.
+    Updates audio_url and audio_status on the source record when done.
+    """
+    from app.services.audio_generation import generate_audio_from_pdf
+
+    resource_type = job.payload.get("resource_type")  # "textbook" | "notes"
+    resource_id = job.payload.get("resource_id")
+    file_url = job.payload.get("file_url")
+    chapter_id = job.payload.get("chapter_id")
+
+    # Resolve the record to update
+    if resource_type == "textbook":
+        record = await session.get(StudentTextbook, resource_id)
+    elif resource_type == "notes":
+        record = await session.get(StudentNotes, resource_id)
+    else:
+        raise ValueError(f"Unknown resource_type for audio job: {resource_type}")
+
+    if not record:
+        raise ValueError(f"{resource_type} id={resource_id} not found")
+
+    # Generate audio (sync, CPU+network bound — run in executor)
+    audio_url = await asyncio.get_event_loop().run_in_executor(
+        None,
+        generate_audio_from_pdf,
+        file_url,
+        resource_type,
+        resource_id,
+        chapter_id,
+    )
+
+    record.audio_url = audio_url
+    record.audio_status = "completed"
+    session.add(record)
+
+    job.result = {"audio_url": audio_url, "resource_type": resource_type, "resource_id": resource_id}
+
+
 async def run_activity_job(job_id: int):
     async with async_session_maker() as session:
         job = await session.get(ActivityGenerationJob, job_id)
@@ -265,6 +305,8 @@ async def run_activity_job(job_id: int):
                 await _run_activities_job(job, session)
             elif job.job_type == "textbook_process":
                 await _run_textbook_process_job(job, session)
+            elif job.job_type == "audio_generation":
+                await _run_audio_generation_job(job, session)
             else:
                 raise ValueError("Unsupported job type")
 
@@ -272,6 +314,24 @@ async def run_activity_job(job_id: int):
         except Exception as e:
             job.status = "failed"
             job.error = str(e)
+
+            # For audio jobs: mark the source record as failed so the frontend
+            # can show the correct status instead of staying stuck on "processing".
+            if job.job_type == "audio_generation":
+                try:
+                    resource_type = job.payload.get("resource_type")
+                    resource_id = job.payload.get("resource_id")
+                    if resource_type == "textbook":
+                        record = await session.get(StudentTextbook, resource_id)
+                    elif resource_type == "notes":
+                        record = await session.get(StudentNotes, resource_id)
+                    else:
+                        record = None
+                    if record:
+                        record.audio_status = "failed"
+                        session.add(record)
+                except Exception:
+                    pass
 
         session.add(job)
         await session.commit()

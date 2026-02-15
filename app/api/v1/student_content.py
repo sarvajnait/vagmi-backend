@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile, HTTPException, Form, Query
 from pydantic import BaseModel
 from loguru import logger
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -12,6 +12,7 @@ from app.models import (
     StudentVideo,
     PreviousYearQuestionPaper,
     Subject,
+    ActivityGenerationJob,
 )
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do
@@ -35,15 +36,15 @@ def sort_ordering(model):
 # ============================================================
 @router.post("/textbook")
 async def upload_textbook(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
-    """Upload a textbook directly to DigitalOcean and add to DB/vector store."""
+    """Upload a textbook to DigitalOcean and queue audio generation as a background job."""
     try:
-
         do_path = f"chapters/{chapter_id}/student-content/textbooks"
         file_url = upload_to_do(file, do_path)
 
@@ -64,13 +65,33 @@ async def upload_textbook(
             file_url=file_url,
             sort_order=next_order,
             original_filename=file.filename,
+            audio_status="processing",
         )
         session.add(textbook)
         await session.commit()
         await session.refresh(textbook)
 
+        job = ActivityGenerationJob(
+            job_type="audio_generation",
+            status="pending",
+            payload={
+                "resource_type": "textbook",
+                "resource_id": textbook.id,
+                "file_url": file_url,
+                "chapter_id": chapter_id,
+            },
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+
+        from app.services.activity_jobs import enqueue_activity_job
+        background_tasks.add_task(enqueue_activity_job, job.id)
+
         return {
-            "message": "Document uploaded",
+            "message": "Textbook uploaded. Audio generation in progress.",
+            "data": textbook.dict(),
+            "job_id": job.id,
         }
 
     except Exception as e:
@@ -181,7 +202,7 @@ async def reorder_textbooks(
 async def delete_textbook(
     textbook_id: int, session: AsyncSession = Depends(get_session)
 ):
-    """Delete a textbook from DB, vector store, and DigitalOcean Spaces."""
+    """Delete a textbook from DB and DigitalOcean Spaces (PDF + audio)."""
     try:
         textbook = await session.get(StudentTextbook, textbook_id)
         if not textbook:
@@ -189,6 +210,11 @@ async def delete_textbook(
 
         if textbook.file_url:
             delete_from_do(textbook.file_url)
+        if textbook.audio_url:
+            try:
+                delete_from_do(textbook.audio_url)
+            except Exception as e:
+                logger.warning(f"Could not delete audio file from DO: {e}")
 
         await session.delete(textbook)
         await session.commit()
@@ -204,6 +230,7 @@ async def delete_textbook(
 
 @router.put("/textbook/{textbook_id}")
 async def update_textbook(
+    background_tasks: BackgroundTasks,
     textbook_id: int,
     file: UploadFile | None = File(None),
     chapter_id: Optional[int] = Form(None),
@@ -211,7 +238,7 @@ async def update_textbook(
     description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
-    """Update a textbook's metadata or file."""
+    """Update a textbook's metadata or file. Re-generates audio when file changes."""
     try:
         textbook = await session.get(StudentTextbook, textbook_id)
         if not textbook:
@@ -228,23 +255,52 @@ async def update_textbook(
         if description is not None:
             textbook.description = description
 
+        job_id = None
         if file:
             do_path = f"chapters/{textbook.chapter_id}/student-content/textbooks"
             new_file_url = upload_to_do(file, do_path)
 
             if textbook.file_url:
                 delete_from_do(textbook.file_url)
+            if textbook.audio_url:
+                try:
+                    delete_from_do(textbook.audio_url)
+                except Exception as e:
+                    logger.warning(f"Could not delete old audio file: {e}")
 
             textbook.file_url = new_file_url
             textbook.original_filename = file.filename
             if title is None:
                 textbook.title = file.filename
+            textbook.audio_url = None
+            textbook.audio_status = "processing"
 
         session.add(textbook)
         await session.commit()
         await session.refresh(textbook)
 
-        return {"message": "Textbook updated", "data": textbook.dict()}
+        if file:
+            job = ActivityGenerationJob(
+                job_type="audio_generation",
+                status="pending",
+                payload={
+                    "resource_type": "textbook",
+                    "resource_id": textbook.id,
+                    "file_url": textbook.file_url,
+                    "chapter_id": textbook.chapter_id,
+                },
+            )
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+            from app.services.activity_jobs import enqueue_activity_job
+            background_tasks.add_task(enqueue_activity_job, job.id)
+            job_id = job.id
+
+        response = {"message": "Textbook updated", "data": textbook.dict()}
+        if job_id:
+            response["job_id"] = job_id
+        return response
 
     except HTTPException:
         raise
@@ -258,15 +314,14 @@ async def update_textbook(
 # ============================================================
 @router.post("/notes")
 async def upload_note(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     chapter_id: int = Form(...),
     title: str = Form(...),
     description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
-    """
-    Upload a note file directly to DigitalOcean and add to DB.
-    """
+    """Upload a note file to DigitalOcean and queue audio generation as a background job."""
     try:
         do_path = f"chapters/{chapter_id}/student-content/notes"
         file_url = upload_to_do(file, do_path)
@@ -288,12 +343,34 @@ async def upload_note(
             file_url=file_url,
             sort_order=next_order,
             original_filename=file.filename,
+            audio_status="processing",
         )
         session.add(note)
         await session.commit()
         await session.refresh(note)
 
-        return {"message": "Note uploaded", "data": note.dict()}
+        job = ActivityGenerationJob(
+            job_type="audio_generation",
+            status="pending",
+            payload={
+                "resource_type": "notes",
+                "resource_id": note.id,
+                "file_url": file_url,
+                "chapter_id": chapter_id,
+            },
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+
+        from app.services.activity_jobs import enqueue_activity_job
+        background_tasks.add_task(enqueue_activity_job, job.id)
+
+        return {
+            "message": "Note uploaded. Audio generation in progress.",
+            "data": note.dict(),
+            "job_id": job.id,
+        }
 
     except Exception as e:
         logger.error(f"Error uploading note: {e}")
@@ -351,7 +428,7 @@ async def reorder_notes(
 
 @router.delete("/notes/{note_id}")
 async def delete_note(note_id: int, session: AsyncSession = Depends(get_session)):
-    """Delete a note from DB and DigitalOcean Spaces."""
+    """Delete a note from DB and DigitalOcean Spaces (PDF + audio)."""
     try:
         note = await session.get(StudentNotes, note_id)
         if not note:
@@ -363,6 +440,11 @@ async def delete_note(note_id: int, session: AsyncSession = Depends(get_session)
             except Exception as e:
                 logger.error(f"Error deleting note file from DO: {e}")
                 raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
+        if note.audio_url:
+            try:
+                delete_from_do(note.audio_url)
+            except Exception as e:
+                logger.warning(f"Could not delete note audio from DO: {e}")
 
         await session.delete(note)
         await session.commit()
@@ -378,6 +460,7 @@ async def delete_note(note_id: int, session: AsyncSession = Depends(get_session)
 
 @router.put("/notes/{note_id}")
 async def update_note(
+    background_tasks: BackgroundTasks,
     note_id: int,
     file: UploadFile | None = File(None),
     chapter_id: Optional[int] = Form(None),
@@ -385,7 +468,7 @@ async def update_note(
     description: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
-    """Update a student note's metadata or file."""
+    """Update a student note's metadata or file. Re-generates audio when file changes."""
     try:
         note = await session.get(StudentNotes, note_id)
         if not note:
@@ -402,23 +485,52 @@ async def update_note(
         if description is not None:
             note.description = description
 
+        job_id = None
         if file:
             do_path = f"chapters/{note.chapter_id}/student-content/notes"
             new_file_url = upload_to_do(file, do_path)
 
             if note.file_url:
                 delete_from_do(note.file_url)
+            if note.audio_url:
+                try:
+                    delete_from_do(note.audio_url)
+                except Exception as e:
+                    logger.warning(f"Could not delete old note audio: {e}")
 
             note.file_url = new_file_url
             note.original_filename = file.filename
             if title is None:
                 note.title = file.filename
+            note.audio_url = None
+            note.audio_status = "processing"
 
         session.add(note)
         await session.commit()
         await session.refresh(note)
 
-        return {"message": "Note updated", "data": note.dict()}
+        if file:
+            job = ActivityGenerationJob(
+                job_type="audio_generation",
+                status="pending",
+                payload={
+                    "resource_type": "notes",
+                    "resource_id": note.id,
+                    "file_url": note.file_url,
+                    "chapter_id": note.chapter_id,
+                },
+            )
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+            from app.services.activity_jobs import enqueue_activity_job
+            background_tasks.add_task(enqueue_activity_job, job.id)
+            job_id = job.id
+
+        response = {"message": "Note updated", "data": note.dict()}
+        if job_id:
+            response["job_id"] = job_id
+        return response
 
     except HTTPException:
         raise

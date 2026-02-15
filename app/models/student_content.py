@@ -16,6 +16,8 @@ class StudentTextbookBase(SQLModel):
     file_url: str
     sort_order: Optional[int] = Field(default=None)
     original_filename: Optional[str] = None
+    audio_url: Optional[str] = None
+    audio_status: Optional[str] = None  # "processing" | "completed" | "failed"
 
 
 class StudentTextbook(StudentTextbookBase, BaseModel, table=True):
@@ -43,6 +45,8 @@ class StudentNotesBase(SQLModel):
     file_url: str
     sort_order: Optional[int] = Field(default=None)
     original_filename: Optional[str] = None
+    audio_url: Optional[str] = None
+    audio_status: Optional[str] = None  # "processing" | "completed" | "failed"
 
 
 class StudentNotes(StudentNotesBase, BaseModel, table=True):

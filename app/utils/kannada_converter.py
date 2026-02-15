@@ -172,14 +172,8 @@ def convert_kannada_text(text: str) -> str:
         converter = KannadaConverter()
         return converter.ascii_to_unicode(text)
     else:
-        # Unknown encoding, try conversion anyway (it won't hurt if it's already Unicode)
-        logger.debug("Unknown encoding, attempting conversion")
-        converter = KannadaConverter()
-        converted = converter.ascii_to_unicode(text)
-
-        # If conversion produced Unicode Kannada, use it; otherwise use original
-        if detect_kannada_encoding(converted) == "unicode":
-            return converted
+        # Unknown encoding (likely plain English/non-Kannada) — return as-is
+        logger.debug("Unknown encoding, returning text unchanged")
         return text
 
 
