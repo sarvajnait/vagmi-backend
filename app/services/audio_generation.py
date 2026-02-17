@@ -7,7 +7,7 @@ Flow:
   1. Load PDF via PyPDFLoader
   2. Convert Kannada legacy text
   3. Split into TTS-safe chunks (~3000 chars, sentence-boundary aware)
-  4. Call gemini-2.5-flash-preview-tts for each chunk
+  4. Call gemini-2.5-pro-preview-tts for each chunk
   5. Concatenate raw PCM and wrap in a single WAV file
   6. Upload final audio to DigitalOcean Spaces
   7. Return the public audio URL
@@ -15,6 +15,8 @@ Flow:
 
 import io
 import os
+import re
+import time
 import uuid
 import wave
 
@@ -30,12 +32,14 @@ DO_REGION = "blr1"
 DO_BUCKET = "vagmi"
 DO_ENDPOINT = f"https://{DO_REGION}.digitaloceanspaces.com"
 
-TTS_CHUNK_SIZE = 3000  # chars — keep under 4000 byte API limit (style prefix adds ~200 chars)
-TTS_MODEL = "gemini-2.5-flash-preview-tts"
+TTS_CHUNK_SIZE = 2000  # chars — keep under 4000 byte API limit (style prefix adds ~200 chars)
+TTS_MODEL = "gemini-2.5-pro-preview-tts"
 TTS_VOICE = "Kore"
 WAV_SAMPLE_RATE = 24000
 WAV_CHANNELS = 1
 WAV_SAMPLE_WIDTH = 2  # 16-bit PCM
+TTS_RETRY_MAX_ATTEMPTS = 4
+TTS_RETRY_BASE_DELAY_SEC = 1.5
 
 TTS_STYLE_PREFIX = (
     "You are an experienced teacher narrating educational content for students. "
@@ -47,6 +51,14 @@ TTS_STYLE_PREFIX = (
     "positive tone uplift where appropriate. Keep it concise, accurate, and suitable for "
     "spoken audio without adding new factual claims beyond the source.\n\n"
 )
+
+_HTTP_5XX_PATTERN = re.compile(r"\b5\d{2}\b")
+
+
+def _is_retryable_tts_error(exc: Exception) -> bool:
+    """Retry only transient provider-side TTS failures (HTTP 5xx)."""
+    message = str(exc)
+    return bool(_HTTP_5XX_PATTERN.search(message))
 
 
 def _split_text_for_tts(text: str, chunk_size: int = TTS_CHUNK_SIZE) -> list[str]:
@@ -147,20 +159,38 @@ def generate_audio_from_pdf(
     for i, chunk in enumerate(chunks):
         logger.debug(f"TTS chunk {i + 1}/{len(chunks)} ({len(chunk)} chars): {repr(chunk[:200])}")
         prompt = TTS_STYLE_PREFIX + chunk
-        response = client.models.generate_content(
-            model=TTS_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=TTS_VOICE,
+        response = None
+        for attempt in range(1, TTS_RETRY_MAX_ATTEMPTS + 1):
+            try:
+                response = client.models.generate_content(
+                    model=TTS_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=types.SpeechConfig(
+                            voice_config=types.VoiceConfig(
+                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                    voice_name=TTS_VOICE,
+                                )
+                            )
                         )
-                    )
-                ),
-            ),
-        )
+                    ),
+                )
+                break
+            except Exception as exc:
+                should_retry = _is_retryable_tts_error(exc) and attempt < TTS_RETRY_MAX_ATTEMPTS
+                if not should_retry:
+                    raise
+                delay = TTS_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1))
+                logger.warning(
+                    f"TTS chunk {i + 1}/{len(chunks)} failed with retryable error "
+                    f"(attempt {attempt}/{TTS_RETRY_MAX_ATTEMPTS}): {exc}. "
+                    f"Retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
+
+        if response is None:
+            raise ValueError(f"TTS failed with no response for chunk {i + 1}")
         candidate = response.candidates[0] if response.candidates else None
         if not candidate or not candidate.content or not candidate.content.parts:
             finish = candidate.finish_reason if candidate else "no candidate"
