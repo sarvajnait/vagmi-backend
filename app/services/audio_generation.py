@@ -38,10 +38,13 @@ WAV_CHANNELS = 1
 WAV_SAMPLE_WIDTH = 2  # 16-bit PCM
 
 TTS_STYLE_PREFIX = (
-    "Read the following educational content clearly and warmly, "
-    "as an experienced teacher speaking directly to students. "
-    "Maintain a steady, engaging pace. Do not add commentary or explanations "
-    "beyond what is written:\n\n"
+    "You are an experienced teacher narrating educational content for students. "
+    "First, silently remove non-content artifacts such as headers, footers, page numbers, "
+    "watermarks, repeated titles, or other noise from the text. "
+    "Then rewrite the content so it sounds natural and engaging: keep the core meaning, "
+    "but do not stay verbatim. Add short transitions, clarifying phrases, and gentle, "
+    "positive tone uplift where appropriate. Keep it concise, accurate, and suitable for "
+    "spoken audio without adding new factual claims beyond the source.\n\n"
 )
 
 

@@ -22,7 +22,15 @@
       "Bash(\".venv/Scripts/python.exe\" -m alembic revision --autogenerate -m \"Add ai_feedback to activity_answers\")",
       "Bash(\".venv/Scripts/python.exe\" -m alembic upgrade head)",
       "Bash(ls:*)",
-      "Bash(psql:*)"
+      "Bash(psql:*)",
+      "Bash(.venv/Scripts/python:*)",
+      "WebFetch(domain:docs.cloud.google.com)",
+      "Bash(alembic upgrade:*)",
+      "Bash(xxd:*)",
+      "WebFetch(domain:docs.langchain.com)",
+      "WebFetch(domain:python.langchain.com)",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(pip install:*)"
     ],
     "deny": [],
     "ask": []
