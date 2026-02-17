@@ -7,7 +7,7 @@ Flow:
   1. Load PDF via PyPDFLoader
   2. Convert Kannada legacy text
   3. Split into TTS-safe chunks (~3000 chars, sentence-boundary aware)
-  4. Call gemini-2.5-pro-preview-tts for each chunk
+  4. Call gemini-2.5-flash-preview-tts for each chunk
   5. Concatenate raw PCM and wrap in a single WAV file
   6. Upload final audio to DigitalOcean Spaces
   7. Return the public audio URL
@@ -19,6 +19,7 @@ import re
 import time
 import uuid
 import wave
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
 from google import genai
@@ -33,13 +34,14 @@ DO_BUCKET = "vagmi"
 DO_ENDPOINT = f"https://{DO_REGION}.digitaloceanspaces.com"
 
 TTS_CHUNK_SIZE = 2000  # chars — keep under 4000 byte API limit (style prefix adds ~200 chars)
-TTS_MODEL = "gemini-2.5-pro-preview-tts"
+TTS_MODEL = "gemini-2.5-flash-preview-tts"
 TTS_VOICE = "Kore"
 WAV_SAMPLE_RATE = 24000
 WAV_CHANNELS = 1
 WAV_SAMPLE_WIDTH = 2  # 16-bit PCM
 TTS_RETRY_MAX_ATTEMPTS = 4
 TTS_RETRY_BASE_DELAY_SEC = 1.5
+TTS_MAX_CONCURRENCY = 3
 
 TTS_STYLE_PREFIX = (
     "You are an experienced teacher narrating educational content for students. "
@@ -61,6 +63,14 @@ def _is_retryable_tts_error(exc: Exception) -> bool:
     return bool(_HTTP_5XX_PATTERN.search(message))
 
 
+def _is_retryable_no_content_response(candidate) -> bool:
+    """Retry transient no-content responses seen in preview TTS."""
+    if not candidate:
+        return True
+    finish = str(getattr(candidate, "finish_reason", "") or "")
+    return finish.endswith("OTHER")
+
+
 def _split_text_for_tts(text: str, chunk_size: int = TTS_CHUNK_SIZE) -> list[str]:
     """Split long text into chunks that fit within TTS input limits."""
     chunks = []
@@ -75,6 +85,73 @@ def _split_text_for_tts(text: str, chunk_size: int = TTS_CHUNK_SIZE) -> list[str
     if text:
         chunks.append(text)
     return chunks
+
+
+def _generate_tts_pcm_for_chunk(chunk: str, chunk_index: int, total_chunks: int) -> bytes:
+    """Generate TTS audio for a single chunk with retry on transient 5xx errors."""
+    prompt = TTS_STYLE_PREFIX + chunk
+    client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+    for attempt in range(1, TTS_RETRY_MAX_ATTEMPTS + 1):
+        try:
+            response = client.models.generate_content(
+                model=TTS_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=TTS_VOICE,
+                            )
+                        )
+                    ),
+                ),
+            )
+            candidate = response.candidates[0] if response.candidates else None
+            if not candidate or not candidate.content or not candidate.content.parts:
+                finish = getattr(candidate, "finish_reason", "no candidate")
+                retryable = _is_retryable_no_content_response(candidate)
+                if retryable and attempt < TTS_RETRY_MAX_ATTEMPTS:
+                    delay = TTS_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"TTS chunk {chunk_index + 1}/{total_chunks} returned no content "
+                        f"(finish_reason={finish}) on attempt "
+                        f"{attempt}/{TTS_RETRY_MAX_ATTEMPTS}. Retrying in {delay:.1f}s"
+                    )
+                    time.sleep(delay)
+                    continue
+                raise ValueError(
+                    f"TTS returned no content for chunk {chunk_index + 1} "
+                    f"(finish_reason={finish})"
+                )
+
+            pcm_data = candidate.content.parts[0].inline_data.data
+            if not pcm_data:
+                if attempt < TTS_RETRY_MAX_ATTEMPTS:
+                    delay = TTS_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"TTS chunk {chunk_index + 1}/{total_chunks} returned empty audio "
+                        f"on attempt {attempt}/{TTS_RETRY_MAX_ATTEMPTS}. "
+                        f"Retrying in {delay:.1f}s"
+                    )
+                    time.sleep(delay)
+                    continue
+                raise ValueError(f"TTS returned empty audio for chunk {chunk_index + 1}")
+
+            return pcm_data
+        except Exception as exc:
+            should_retry = _is_retryable_tts_error(exc) and attempt < TTS_RETRY_MAX_ATTEMPTS
+            if not should_retry:
+                raise
+            delay = TTS_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1))
+            logger.warning(
+                f"TTS chunk {chunk_index + 1}/{total_chunks} failed with retryable error "
+                f"(attempt {attempt}/{TTS_RETRY_MAX_ATTEMPTS}): {exc}. "
+                f"Retrying in {delay:.1f}s"
+            )
+            time.sleep(delay)
+
+    raise ValueError(f"TTS failed for chunk {chunk_index + 1} after retries")
 
 
 def _pcm_chunks_to_wav(pcm_chunks: list[bytes]) -> bytes:
@@ -153,52 +230,26 @@ def generate_audio_from_pdf(
     )
 
     # 4. TTS each chunk via google-genai SDK (uses GOOGLE_API_KEY)
-    client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-    pcm_parts: list[bytes] = []
+    logger.info(
+        f"Starting parallel TTS generation with concurrency={TTS_MAX_CONCURRENCY} "
+        f"for {len(chunks)} chunks"
+    )
+    indexed_pcm_parts: dict[int, bytes] = {}
+    with ThreadPoolExecutor(max_workers=TTS_MAX_CONCURRENCY) as executor:
+        future_to_index = {}
+        for i, chunk in enumerate(chunks):
+            logger.debug(
+                f"TTS chunk {i + 1}/{len(chunks)} queued ({len(chunk)} chars): {repr(chunk[:200])}"
+            )
+            future = executor.submit(_generate_tts_pcm_for_chunk, chunk, i, len(chunks))
+            future_to_index[future] = i
 
-    for i, chunk in enumerate(chunks):
-        logger.debug(f"TTS chunk {i + 1}/{len(chunks)} ({len(chunk)} chars): {repr(chunk[:200])}")
-        prompt = TTS_STYLE_PREFIX + chunk
-        response = None
-        for attempt in range(1, TTS_RETRY_MAX_ATTEMPTS + 1):
-            try:
-                response = client.models.generate_content(
-                    model=TTS_MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_modalities=["AUDIO"],
-                        speech_config=types.SpeechConfig(
-                            voice_config=types.VoiceConfig(
-                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                    voice_name=TTS_VOICE,
-                                )
-                            )
-                        )
-                    ),
-                )
-                break
-            except Exception as exc:
-                should_retry = _is_retryable_tts_error(exc) and attempt < TTS_RETRY_MAX_ATTEMPTS
-                if not should_retry:
-                    raise
-                delay = TTS_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1))
-                logger.warning(
-                    f"TTS chunk {i + 1}/{len(chunks)} failed with retryable error "
-                    f"(attempt {attempt}/{TTS_RETRY_MAX_ATTEMPTS}): {exc}. "
-                    f"Retrying in {delay:.1f}s"
-                )
-                time.sleep(delay)
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            indexed_pcm_parts[index] = future.result()
+            logger.debug(f"TTS chunk {index + 1}/{len(chunks)} completed")
 
-        if response is None:
-            raise ValueError(f"TTS failed with no response for chunk {i + 1}")
-        candidate = response.candidates[0] if response.candidates else None
-        if not candidate or not candidate.content or not candidate.content.parts:
-            finish = candidate.finish_reason if candidate else "no candidate"
-            raise ValueError(f"TTS returned no content for chunk {i + 1} (finish_reason={finish})")
-        pcm_data = candidate.content.parts[0].inline_data.data
-        if not pcm_data:
-            raise ValueError(f"TTS returned empty audio for chunk {i + 1}")
-        pcm_parts.append(pcm_data)
+    pcm_parts = [indexed_pcm_parts[i] for i in range(len(chunks))]
 
     # 5. Combine PCM chunks into a single WAV file
     wav_bytes = _pcm_chunks_to_wav(pcm_parts)
