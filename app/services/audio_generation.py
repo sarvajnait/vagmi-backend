@@ -39,9 +39,9 @@ TTS_VOICE = "Kore"
 WAV_SAMPLE_RATE = 24000
 WAV_CHANNELS = 1
 WAV_SAMPLE_WIDTH = 2  # 16-bit PCM
-TTS_RETRY_MAX_ATTEMPTS = 4
+TTS_RETRY_MAX_ATTEMPTS = 5
 TTS_RETRY_BASE_DELAY_SEC = 1.5
-TTS_MAX_CONCURRENCY = 3
+TTS_MAX_CONCURRENCY = 5
 
 TTS_STYLE_PREFIX = (
     "You are an experienced teacher narrating educational content for students. "
