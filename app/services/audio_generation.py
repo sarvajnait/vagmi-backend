@@ -39,6 +39,7 @@ WAV_SAMPLE_WIDTH = 2  # 16-bit PCM
 
 TTS_STYLE_PREFIX = (
     "You are an experienced teacher narrating educational content for students. "
+    "Output AUDIO ONLY (no text). Do not display or return any written content. "
     "First, silently remove non-content artifacts such as headers, footers, page numbers, "
     "watermarks, repeated titles, or other noise from the text. "
     "Then rewrite the content so it sounds natural and engaging: keep the core meaning, "
