@@ -12,6 +12,7 @@ from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_text
 
 MAX_TOPIC_CHARS = 12000
 MAX_CONTEXT_CHARS = 15000
+FINAL_TOPIC_COUNT = 6
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -154,7 +155,9 @@ def _generate_topics_from_text(
     return topics if isinstance(topics, list) else []
 
 
-def _consolidate_topics(topics: List[Dict[str, str]]) -> List[Dict[str, str]]:
+def _consolidate_topics(
+    topics: List[Dict[str, str]], final_topic_count: int = FINAL_TOPIC_COUNT
+) -> List[Dict[str, str]]:
     system_prompt = (
         "Act as an expert Curriculum Designer. "
         "Your output must be strict JSON only — no markdown, no prose, no extra text."
@@ -164,7 +167,8 @@ def _consolidate_topics(topics: List[Dict[str, str]]) -> List[Dict[str, str]]:
         "deduplicate and consolidate them into the final comprehensive topic list.\n\n"
         "Requirements:\n"
         "- Complete Coverage: Preserve all distinct concepts — do not drop topics that represent unique content.\n"
-        "- Dynamic Count: Return as many topics as needed for full coverage. Do not impose a fixed limit.\n"
+        f"- Return EXACTLY {final_topic_count} topics in the final output.\n"
+        "- Merge related subtopics into broader, clear topics so full chapter coverage is preserved.\n"
         "- Deduplication: Merge topics that refer to the same concept into one well-named topic.\n"
         "- Exhaustive Logic: The final list must be thorough enough that generating 'Important Questions' "
         "for each topic would cover the entire chapter without gaps.\n\n"
@@ -187,15 +191,18 @@ def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, st
     if not chapter_text:
         return []
 
+    all_topics: List[Dict[str, str]] = []
     if len(chapter_text) <= MAX_TOPIC_CHARS:
-        return _generate_topics_from_text(chapter_text, medium_name)
+        all_topics.extend(_generate_topics_from_text(chapter_text, medium_name))
+        return _consolidate_topics(all_topics, final_topic_count=FINAL_TOPIC_COUNT)
 
     chunks = _split_text(chapter_text, chunk_size=MAX_TOPIC_CHARS, chunk_overlap=400)
-    all_topics: List[Dict[str, str]] = []
-    for chunk in chunks[:5]:
+    for chunk in chunks:
         all_topics.extend(_generate_topics_from_text(chunk, medium_name))
 
-    return _consolidate_topics(all_topics)
+    if not all_topics:
+        return []
+    return _consolidate_topics(all_topics, final_topic_count=FINAL_TOPIC_COUNT)
 
 
 def generate_activities(
