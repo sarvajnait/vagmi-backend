@@ -127,6 +127,30 @@ def _generate_topics_from_text(
         lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
         language_instruction = f"\nIMPORTANT: This is {lang_name} medium. Generate topic titles and summaries in {lang_name} language."
 
+    language_instruction = ""
+    medium_lower = medium_name.lower()
+    if any(
+        lang in medium_lower
+        for lang in [
+            "english",
+            "hindi",
+            "kannada",
+            "malayalam",
+            "tamil",
+            "telugu",
+            "sanskrit",
+            "urdu",
+            "bengali",
+            "marathi",
+            "gujarati",
+        ]
+    ):
+        lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
+        language_instruction = (
+            f"\nIMPORTANT: This is {lang_name} medium. Generate all topic titles and "
+            f"summaries in {lang_name} language only."
+        )
+
     human_prompt = (
         "Analyze the provided chapter text and extract a comprehensive list of key topics "
         "that represent the entire scope of the content.\n\n"
@@ -156,7 +180,9 @@ def _generate_topics_from_text(
 
 
 def _consolidate_topics(
-    topics: List[Dict[str, str]], final_topic_count: int = FINAL_TOPIC_COUNT
+    topics: List[Dict[str, str]],
+    medium_name: str = "",
+    final_topic_count: int = FINAL_TOPIC_COUNT,
 ) -> List[Dict[str, str]]:
     system_prompt = (
         "Act as an expert Curriculum Designer. "
@@ -174,6 +200,8 @@ def _consolidate_topics(
         "for each topic would cover the entire chapter without gaps.\n\n"
         "Return JSON in this schema only:\n"
         '{ "topics": [ { "title": "...", "summary": "..." } ] }\n\n'
+        f"{language_instruction}\n\n"
+        f"MEDIUM: {medium_name}\n\n"
         f"TOPICS:\n{json.dumps(topics)}"
     )
 
@@ -194,7 +222,11 @@ def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, st
     all_topics: List[Dict[str, str]] = []
     if len(chapter_text) <= MAX_TOPIC_CHARS:
         all_topics.extend(_generate_topics_from_text(chapter_text, medium_name))
-        return _consolidate_topics(all_topics, final_topic_count=FINAL_TOPIC_COUNT)
+        return _consolidate_topics(
+            all_topics,
+            medium_name=medium_name,
+            final_topic_count=FINAL_TOPIC_COUNT,
+        )
 
     chunks = _split_text(chapter_text, chunk_size=MAX_TOPIC_CHARS, chunk_overlap=400)
     for chunk in chunks:
@@ -202,7 +234,11 @@ def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, st
 
     if not all_topics:
         return []
-    return _consolidate_topics(all_topics, final_topic_count=FINAL_TOPIC_COUNT)
+    return _consolidate_topics(
+        all_topics,
+        medium_name=medium_name,
+        final_topic_count=FINAL_TOPIC_COUNT,
+    )
 
 
 def generate_activities(

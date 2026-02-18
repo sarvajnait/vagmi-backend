@@ -315,6 +315,27 @@ async def run_activity_job(job_id: int):
             job.status = "failed"
             job.error = str(e)
 
+            # For textbook_process jobs: mark the artifact as failed immediately
+            # so the frontend doesn't stay stuck on "processing" in the same session.
+            if job.job_type == "textbook_process":
+                try:
+                    chapter_id = (job.payload or {}).get("chapter_id")
+                    if chapter_id:
+                        art_result = await session.exec(
+                            select(ChapterArtifact).where(
+                                ChapterArtifact.chapter_id == chapter_id,
+                                ChapterArtifact.artifact_type == "chapter_summary",
+                                ChapterArtifact.status == "processing",
+                            )
+                        )
+                        artifact = art_result.first()
+                        if artifact:
+                            artifact.status = "failed"
+                            artifact.error = str(e)
+                            session.add(artifact)
+                except Exception:
+                    pass
+
             # For audio jobs: mark the source record as failed so the frontend
             # can show the correct status instead of staying stuck on "processing".
             if job.job_type == "audio_generation":
