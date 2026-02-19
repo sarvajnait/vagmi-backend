@@ -43,7 +43,6 @@ def _split_text(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
 
 def get_full_chapter_text(chapter_id: int) -> str:
     # Query database directly to get all documents for chapter without needing similarity search
-    from sqlalchemy import text
     from app.core.config import settings
     import psycopg
 
@@ -125,27 +124,6 @@ def _generate_topics_from_text(
         ]
     ):
         lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
-        language_instruction = f"\nIMPORTANT: This is {lang_name} medium. Generate topic titles and summaries in {lang_name} language."
-
-    language_instruction = ""
-    medium_lower = medium_name.lower()
-    if any(
-        lang in medium_lower
-        for lang in [
-            "english",
-            "hindi",
-            "kannada",
-            "malayalam",
-            "tamil",
-            "telugu",
-            "sanskrit",
-            "urdu",
-            "bengali",
-            "marathi",
-            "gujarati",
-        ]
-    ):
-        lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
         language_instruction = (
             f"\nIMPORTANT: This is {lang_name} medium. Generate all topic titles and "
             f"summaries in {lang_name} language only."
@@ -188,6 +166,31 @@ def _consolidate_topics(
         "Act as an expert Curriculum Designer. "
         "Your output must be strict JSON only — no markdown, no prose, no extra text."
     )
+
+    language_instruction = ""
+    medium_lower = medium_name.lower()
+    if any(
+        lang in medium_lower
+        for lang in [
+            "english",
+            "hindi",
+            "kannada",
+            "malayalam",
+            "tamil",
+            "telugu",
+            "sanskrit",
+            "urdu",
+            "bengali",
+            "marathi",
+            "gujarati",
+        ]
+    ):
+        lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
+        language_instruction = (
+            f"\nIMPORTANT: This is {lang_name} medium. Generate all topic titles and "
+            f"summaries in {lang_name} language only."
+        )
+
     human_prompt = (
         "Given the topic candidates below extracted from different parts of a chapter, "
         "deduplicate and consolidate them into the final comprehensive topic list.\n\n"
