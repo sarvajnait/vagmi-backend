@@ -147,6 +147,9 @@ class Settings:
         self.MSG91_AUTH_KEY = os.getenv("MSG91_AUTH_KEY", "")
         self.MSG91_TEMPLATE_ID = os.getenv("MSG91_TEMPLATE_ID", "")
 
+        self.RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
+        self.RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
+
         # JWT Configuration
         self.JWT_SECRET_KEY = os.getenv(
             "JWT_SECRET_KEY",

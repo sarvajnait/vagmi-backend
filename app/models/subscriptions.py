@@ -18,6 +18,7 @@ class SubscriptionPlanBase(SQLModel):
     board_id: int = Field(foreign_key="boards.id")
     medium_id: int = Field(foreign_key="mediums.id")
     amount_inr: int = Field(default=99)
+    duration_days: int = Field(default=30)
     is_active: bool = Field(default=True)
     description: Optional[str] = None
 
@@ -41,6 +42,7 @@ class SubscriptionPlanUpdate(SQLModel):
     board_id: Optional[int] = None
     medium_id: Optional[int] = None
     amount_inr: Optional[int] = None
+    duration_days: Optional[int] = None
     is_active: Optional[bool] = None
     description: Optional[str] = None
 
@@ -88,3 +90,21 @@ class UserSubscriptionRead(UserSubscriptionBase):
     id: int
     plan_name: Optional[str] = None
     user_name: Optional[str] = None
+
+
+# --------------------
+# Razorpay Order
+# --------------------
+class RazorpayOrder(BaseModel, table=True):
+    __tablename__ = "razorpay_orders"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id")
+    plan_id: int = Field(foreign_key="subscription_plans.id")
+    razorpay_order_id: str = Field(unique=True, index=True)
+    amount: int  # in paise
+    currency: str = Field(default="INR")
+    status: str = Field(default="created")  # created | paid | failed
+    receipt: str
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
