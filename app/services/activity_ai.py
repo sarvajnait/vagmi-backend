@@ -12,7 +12,6 @@ from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_text
 
 
 MAX_TOPIC_CHARS = 12000
-MAX_CONTEXT_CHARS = 15000
 
 
 # --------------------
@@ -268,9 +267,7 @@ def generate_activities(
     descriptive_count: int,
     medium_name: str = "",
 ) -> List[Dict[str, Any]]:
-    chapter_text = get_full_chapter_text(chapter_id)
-    topic_context = chapter_text[:MAX_CONTEXT_CHARS]
-
+    topic_context = get_full_chapter_text(chapter_id)
     qa_context = get_qa_context(chapter_id)
     topics_str = ", ".join(topic_titles)
 
