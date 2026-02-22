@@ -314,7 +314,8 @@ Example for {lang_name} medium:
   "type": "mcq",
   "question_text": "[Question in {lang_name}]",
   "options": ["[Option 1 in {lang_name}]", "[Option 2 in {lang_name}]", "[Option 3 in {lang_name}]", "[Option 4 in {lang_name}]"],
-  "correct_answer": "[Correct option text in {lang_name}]"
+  "correct_answer": "[Correct option text in {lang_name}]",
+  "answer_description": "[1-2 sentence explanation of why the correct answer is right, in {lang_name}]"
 }}
 """
 
@@ -326,10 +327,11 @@ Example for {lang_name} medium:
         "- Cognitive Depth: Distribute questions across Bloom's Taxonomy (Recall, Understanding, and Application).\n"
         "- Distractor Quality: For MCQs, provide plausible distractors (wrong options). "
         "Avoid 'None of the above' unless absolutely necessary.\n"
-        "- IMPORTANT: correct_answer must be the EXACT text of one of the options.\n\n"
+        "- IMPORTANT: correct_answer must be the EXACT text of one of the options.\n"
+        "- For MCQs, include answer_description: a 1-2 sentence explanation of why the correct answer is right.\n\n"
         "Return JSON in this schema:\n"
         '{ "activities": [ { "type": "mcq", "question_text": "...", '
-        '"options": ["a","b","c","d"], "correct_answer": "b" }, '
+        '"options": ["a","b","c","d"], "correct_answer": "b", "answer_description": "..." }, '
         '{ "type": "descriptive", "question_text": "...", "answer_text": "..." } ] }\n'
         f"{examples}"
         f"{language_instruction}\n\n"
@@ -433,12 +435,14 @@ def normalize_activity(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 correct_option_index = lower_options.index(correct_answer.lower()) + 1
             except ValueError:
                 return None
+        answer_description = str(item.get("answer_description", "")).strip() or None
         return {
             "type": "mcq",
             "question_text": question_text,
             "options": cleaned_options,
             "correct_option_index": int(correct_option_index),
             "answer_text": None,
+            "answer_description": answer_description,
         }
 
     if activity_type == "descriptive":
