@@ -309,43 +309,57 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
         next_group_order += 1
         topic_groups.append((topic, activity_group))
 
-    # 6. Generate activities for all topics in parallel
-    async def _generate_for_topic(topic: Topic, activity_group: ActivityGroup):
-        logger.info(f"[chapter={chapter_id}] Generating activities for topic='{topic.title}' group_id={activity_group.id}")
-        try:
-            raw = await asyncio.get_event_loop().run_in_executor(
-                None,
-                generate_activities,
-                chapter_id,
-                [topic.title],
-                MCQ_COUNT,
-                DESCRIPTIVE_COUNT,
-                medium_name,
-            )
-        except Exception as exc:
-            logger.error(f"[chapter={chapter_id}] Activity generation FAILED for topic='{topic.title}': {exc}", exc_info=True)
-            return activity_group.id, []
+    # 6. Generate all activities in one chunk-based call (tagged with topic field)
+    all_topic_titles = [topic.title for topic, _ in topic_groups]
+    logger.info(f"[chapter={chapter_id}] Starting chunk-based activity generation for {len(all_topic_titles)} topics")
 
-        logger.debug(f"[chapter={chapter_id}] topic='{topic.title}' raw activities returned: {len(raw)}")
-        normalized = []
-        for item in raw:
-            norm = normalize_activity(item)
-            if norm:
-                normalized.append(norm)
-            else:
-                logger.warning(f"[chapter={chapter_id}] topic='{topic.title}' normalize_activity rejected item: {item}")
-        logger.info(f"[chapter={chapter_id}] topic='{topic.title}' normalized={len(normalized)} / raw={len(raw)}")
-        return activity_group.id, normalized[: MCQ_COUNT + DESCRIPTIVE_COUNT]
-
-    results = await asyncio.gather(
-        *[_generate_for_topic(topic, group) for topic, group in topic_groups]
+    raw_activities = await asyncio.get_event_loop().run_in_executor(
+        None,
+        generate_activities,
+        chapter_id,
+        all_topic_titles,
+        MCQ_COUNT,
+        DESCRIPTIVE_COUNT,
+        medium_name,
     )
+    logger.info(f"[chapter={chapter_id}] Total raw tagged activities: {len(raw_activities)}")
 
-    # Save all activities (sequential DB writes after parallel LLM calls)
+    # Build lookup: normalized topic title → (topic, activity_group)
+    title_to_group: dict[str, tuple[Topic, ActivityGroup]] = {
+        topic.title.strip().lower(): (topic, group)
+        for topic, group in topic_groups
+    }
+
+    # Distribute tagged activities into per-topic buckets (capped per topic)
+    group_id_to_bucket: dict[int, list] = {group.id: [] for _, group in topic_groups}
+    group_id_caps: dict[int, int] = {group.id: MCQ_COUNT + DESCRIPTIVE_COUNT for _, group in topic_groups}
+
+    for item in raw_activities:
+        raw_topic_tag = str(item.get("topic", "")).strip().lower()
+        match = title_to_group.get(raw_topic_tag)
+        if not match:
+            # Fuzzy fallback: pick the topic title that is a substring match
+            for key, val in title_to_group.items():
+                if raw_topic_tag in key or key in raw_topic_tag:
+                    match = val
+                    break
+        if not match:
+            logger.warning(f"[chapter={chapter_id}] Activity topic tag '{item.get('topic')}' matched no known topic — skipping")
+            continue
+        _, group = match
+        if len(group_id_to_bucket[group.id]) >= group_id_caps[group.id]:
+            continue  # cap reached for this topic
+        norm = normalize_activity(item)
+        if norm:
+            group_id_to_bucket[group.id].append(norm)
+        else:
+            logger.warning(f"[chapter={chapter_id}] normalize_activity rejected: {item}")
+
+    # Save all activities (sequential DB writes)
     total_activities_created = 0
     group_id_to_topic = {group.id: topic for topic, group in topic_groups}
 
-    for group_id, normalized in results:
+    for group_id, normalized in group_id_to_bucket.items():
         topic = group_id_to_topic[group_id]
         next_activity_order = 1
         for item in normalized:

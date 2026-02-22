@@ -7,11 +7,13 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from loguru import logger
+from pydantic import BaseModel, conlist
 
 from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks
 
 
 MAX_TOPIC_CHARS = 12000
+MAX_ACTIVITY_CHUNK_CHARS = 12000
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -258,8 +260,27 @@ def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, st
 
 
 # --------------------
-# Activity generation
+# Activity generation — Pydantic structured output
 # --------------------
+
+class _MCQActivity(BaseModel):
+    question_text: str
+    options: conlist(str, min_length=4, max_length=4)
+    correct_answer: str
+    answer_description: str
+
+class _DescriptiveActivity(BaseModel):
+    question_text: str
+    answer_text: str
+
+class _TopicActivities(BaseModel):
+    topic: str
+    mcqs: List[_MCQActivity]
+    descriptives: List[_DescriptiveActivity]
+
+class _ActivityOutput(BaseModel):
+    topics: List[_TopicActivities]
+
 
 def generate_activities(
     chapter_id: int,
@@ -268,17 +289,24 @@ def generate_activities(
     descriptive_count: int,
     medium_name: str = "",
 ) -> List[Dict[str, Any]]:
-    logger.info(f"[chapter={chapter_id}] Generating activities: topics={topic_titles}, mcq={mcq_count}, descriptive={descriptive_count}, medium={medium_name!r}")
-    topic_context = get_full_chapter_text(chapter_id)
-    if not topic_context:
-        logger.warning(f"[chapter={chapter_id}] Empty chapter text — LLM will have no context")
-    else:
-        logger.debug(f"[chapter={chapter_id}] Chapter context length={len(topic_context)}")
+    """
+    Generate activities for all topic titles in a single structured LLM call.
+    Returns a flat list of activities, each with a 'topic' field.
+    """
+    logger.info(
+        f"[chapter={chapter_id}] generate_activities: topics={topic_titles}, "
+        f"mcq={mcq_count}, descriptive={descriptive_count}, medium={medium_name!r}"
+    )
+    chapter_text = get_full_chapter_text(chapter_id)
+    if not chapter_text:
+        logger.warning(f"[chapter={chapter_id}] Empty chapter text — cannot generate activities")
+        return []
+    logger.info(f"[chapter={chapter_id}] Chapter text length={len(chapter_text)}")
+
     qa_context = get_qa_context(chapter_id)
-    topics_str = ", ".join(topic_titles)
+    topics_str = "\n".join(f"- {t}" for t in topic_titles)
 
     language_instruction = ""
-    examples = ""
     medium_lower = medium_name.lower()
     if any(
         lang in medium_lower
@@ -288,55 +316,66 @@ def generate_activities(
         ]
     ):
         lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
-        language_instruction = f"\n\nCRITICAL: This is {lang_name} medium. ALL questions, options, and answers MUST be in {lang_name} language."
-        examples = f"""
-
-Example for {lang_name} medium:
-{{
-  "type": "mcq",
-  "question_text": "[Question in {lang_name}]",
-  "options": ["[Option 1 in {lang_name}]", "[Option 2 in {lang_name}]", "[Option 3 in {lang_name}]", "[Option 4 in {lang_name}]"],
-  "correct_answer": "[Correct option text in {lang_name}]",
-  "answer_description": "[1-2 sentence explanation of why the correct answer is right, in {lang_name}]"
-}}
-"""
+        language_instruction = (
+            f"\n\nCRITICAL: This is {lang_name} medium. "
+            f"ALL questions, options, and answers MUST be in {lang_name} language."
+        )
 
     human_prompt = (
-        f"Generate {mcq_count} MCQs and {descriptive_count} Descriptive questions "
-        "based on the provided TOPICS and CONTEXT.\n\n"
+        f"Generate exactly {mcq_count} MCQ questions and exactly {descriptive_count} descriptive questions "
+        f"for EACH of the following topics, based on the chapter text below.\n\n"
         "Core Constraints:\n"
-        "- Zero-Gap Coverage: Every topic listed in the TOPICS section must be covered by at least one activity.\n"
-        "- Cognitive Depth: Distribute questions across Bloom's Taxonomy (Recall, Understanding, and Application).\n"
-        "- Distractor Quality: For MCQs, provide plausible distractors (wrong options). "
-        "Avoid 'None of the above' unless absolutely necessary.\n"
-        "- IMPORTANT: correct_answer must be the EXACT text of one of the options.\n"
-        "- For MCQs, include answer_description: a 1-2 sentence explanation of why the correct answer is right.\n"
-        f"{examples}"
+        "- Generate questions for EVERY topic listed — do not skip any.\n"
+        "- For each topic: exactly {mcq_count} MCQs and exactly {descriptive_count} descriptive questions.\n"
+        "- MCQ: provide 4 plausible options, correct_answer must be the EXACT text of one option.\n"
+        "- MCQ: include answer_description (1-2 sentence explanation of why the correct answer is right).\n"
+        "- Descriptive: include a full model answer_text.\n"
+        "- Cognitive Depth: distribute across Bloom's Taxonomy (Recall, Understanding, Application).\n"
         f"{language_instruction}\n\n"
-        f"MEDIUM: {medium_name}\n"
-        f"TOPICS: {topics_str}\n\n"
+        f"MEDIUM: {medium_name}\n\n"
+        f"TOPICS:\n{topics_str}\n\n"
         + (
             f"IMPORTANT Q&A (Previous Year / Must-Study):\n"
-            f"These are high-priority questions from previous exams. Anchor-First: adapt and incorporate "
-            f"these into your output before filling gaps from the textbook.\n{qa_context}\n\n"
+            f"Incorporate these high-priority questions first where relevant.\n{qa_context}\n\n"
             if qa_context else ""
         )
-        + f"TEXTBOOK CONTEXT:\n{topic_context}"
+        + f"CHAPTER TEXT:\n{chapter_text}"
     )
 
-    logger.info(f"[chapter={chapter_id}] Calling LLM for activity generation (prompt_length={len(human_prompt)})")
-    llm = _get_llm()
-    response = llm.invoke(
-        [
-            SystemMessage(content="You are an expert Pedagogy & Assessment Design AI. Return ONLY a JSON object. No markdown, no prose."),
-            HumanMessage(content=human_prompt),
-        ]
-    )
-    payload = _extract_json(response.content)
-    activities = payload.get("activities", [])
-    activities = activities if isinstance(activities, list) else []
-    logger.info(f"[chapter={chapter_id}] LLM returned {len(activities)} raw activities")
-    return activities
+    logger.info(f"[chapter={chapter_id}] Calling LLM with structured output (prompt_len={len(human_prompt)})")
+    llm = _get_llm().with_structured_output(_ActivityOutput)
+    try:
+        result: _ActivityOutput = llm.invoke(
+            [
+                SystemMessage(content="You are an expert Pedagogy & Assessment Design AI."),
+                HumanMessage(content=human_prompt),
+            ]
+        )
+    except Exception as exc:
+        logger.error(f"[chapter={chapter_id}] Structured output LLM call failed: {exc}")
+        return []
+
+    all_activities: List[Dict[str, Any]] = []
+    for topic_block in result.topics:
+        for mcq in topic_block.mcqs:
+            all_activities.append({
+                "type": "mcq",
+                "topic": topic_block.topic,
+                "question_text": mcq.question_text,
+                "options": list(mcq.options),
+                "correct_answer": mcq.correct_answer,
+                "answer_description": mcq.answer_description,
+            })
+        for desc in topic_block.descriptives:
+            all_activities.append({
+                "type": "descriptive",
+                "topic": topic_block.topic,
+                "question_text": desc.question_text,
+                "answer_text": desc.answer_text,
+            })
+
+    logger.info(f"[chapter={chapter_id}] Structured output returned {len(all_activities)} total activities across {len(result.topics)} topics")
+    return all_activities
 
 
 # --------------------
