@@ -1,4 +1,5 @@
 from typing import Optional, TYPE_CHECKING
+from sqlalchemy import Column, Integer, ForeignKey
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.base import BaseModel
 
@@ -10,7 +11,9 @@ if TYPE_CHECKING:
 # Student Textbook
 # --------------------
 class StudentTextbookBase(SQLModel):
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     title: str
     description: Optional[str] = None
     file_url: str
@@ -39,7 +42,9 @@ class StudentTextbookRead(StudentTextbookBase):
 # Student Notes (with file support like textbook)
 # --------------------
 class StudentNotesBase(SQLModel):
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     title: str
     description: Optional[str] = None
     file_url: str
@@ -65,7 +70,9 @@ class StudentNotesRead(StudentNotesBase):
 
 
 class StudentVideoBase(SQLModel):
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     title: str
     description: Optional[str] = None
     file_url: str
@@ -92,7 +99,9 @@ class StudentVideoRead(StudentVideoBase):
 # Previous Year Question Papers (subject-level)
 # --------------------
 class PreviousYearQuestionPaperBase(SQLModel):
-    subject_id: int = Field(foreign_key="subjects.id")
+    subject_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     title: str
     num_pages: int
     file_url: str

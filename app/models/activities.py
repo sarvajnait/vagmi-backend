@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 
-from sqlalchemy import ARRAY, String, Column, DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy import ARRAY, String, Column, DateTime, ForeignKey, Integer, UniqueConstraint, func
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.models.base import BaseModel
@@ -12,7 +12,9 @@ from app.models.user import User
 class TopicBase(SQLModel):
     title: str = Field(max_length=255)
     summary: Optional[str] = Field(default=None)
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     sort_order: Optional[int] = Field(default=None)
 
 
@@ -33,7 +35,9 @@ class TopicRead(TopicBase):
 
 class ActivityGroupBase(SQLModel):
     name: str = Field(max_length=255)
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     timer_seconds: Optional[int] = Field(default=None, description="Time limit in seconds for this activity group")
     sort_order: Optional[int] = Field(default=None)
 
@@ -55,8 +59,12 @@ class ActivityGroupRead(ActivityGroupBase):
 
 
 class ChapterActivityBase(SQLModel):
-    activity_group_id: int = Field(foreign_key="activity_groups.id")
-    chapter_id: int = Field(foreign_key="chapters.id")
+    activity_group_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("activity_groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     type: str = Field(max_length=20)
     question_text: str
     options: Optional[list[str]] = Field(default=None, sa_column=Column(ARRAY(String)))
@@ -88,8 +96,10 @@ class ActivityPlaySession(BaseModel, table=True):
     __tablename__ = "activity_play_sessions"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(sa_column=Column(ForeignKey("user.id")))
-    chapter_id: int = Field(foreign_key="chapters.id")
+    user_id: int = Field(sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False))
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     status: str = Field(default="in_progress", max_length=20)
     total_questions: int = Field(default=0)
     correct_count: int = Field(default=0)
@@ -112,8 +122,12 @@ class ActivityAnswer(BaseModel, table=True):
     __table_args__ = (UniqueConstraint("session_id", "activity_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    session_id: int = Field(foreign_key="activity_play_sessions.id")
-    activity_id: int = Field(foreign_key="chapter_activities.id")
+    session_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("activity_play_sessions.id", ondelete="CASCADE"), nullable=False)
+    )
+    activity_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapter_activities.id", ondelete="CASCADE"), nullable=False)
+    )
     selected_option_index: Optional[int] = None
     submitted_answer_text: Optional[str] = None
     is_correct: Optional[bool] = None

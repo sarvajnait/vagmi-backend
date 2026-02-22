@@ -1,6 +1,6 @@
 from typing import Optional, TYPE_CHECKING
 from sqlmodel import SQLModel, Field, Relationship, Column
-from sqlalchemy import ARRAY, String
+from sqlalchemy import ARRAY, String, Integer, ForeignKey
 from app.models.base import BaseModel
 
 if TYPE_CHECKING:
@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 # LLM Textbook
 # --------------------
 class LLMTextbookBase(SQLModel):
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     title: str
     description: Optional[str] = None
     file_url: str
@@ -38,7 +40,9 @@ class LLMTextbookRead(LLMTextbookBase):
 # Additional Notes
 # --------------------
 class AdditionalNotesBase(SQLModel):
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     note: str
     sort_order: Optional[int] = Field(default=None)
 
@@ -62,7 +66,9 @@ class AdditionalNotesRead(AdditionalNotesBase):
 # LLM Image
 # --------------------
 class LLMImageBase(SQLModel):
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     title: str
     description: Optional[str] = None
     file_url: str
@@ -90,7 +96,9 @@ class LLMImageRead(LLMImageBase):
 # LLM Notes (PDF-based, for RAG)
 # --------------------
 class LLMNoteBase(SQLModel):
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     title: str
     description: Optional[str] = None
     file_url: str
@@ -117,7 +125,9 @@ class LLMNoteRead(LLMNoteBase):
 # Q&A Patterns (PDF-based, for RAG)
 # --------------------
 class QAPatternBase(SQLModel):
-    chapter_id: int = Field(foreign_key="chapters.id")
+    chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     title: str
     description: Optional[str] = None
     file_url: str

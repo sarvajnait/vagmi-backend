@@ -1,4 +1,5 @@
 from typing import Optional, List
+from sqlalchemy import Column, Integer, ForeignKey
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.base import BaseModel
 from app.models.llm_resources import (
@@ -49,7 +50,9 @@ class ClassLevelRead(ClassLevelBase):
 # --------------------
 class BoardBase(SQLModel):
     name: str
-    class_level_id: int = Field(foreign_key="class_levels.id")
+    class_level_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("class_levels.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
 
 
 class Board(BoardBase, BaseModel, table=True):
@@ -77,7 +80,9 @@ class BoardRead(BoardBase):
 # --------------------
 class MediumBase(SQLModel):
     name: str
-    board_id: int = Field(foreign_key="boards.id")
+    board_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
 
 
 class Medium(MediumBase, BaseModel, table=True):
@@ -104,7 +109,9 @@ class MediumRead(MediumBase):
 # --------------------
 class SubjectBase(SQLModel):
     name: str
-    medium_id: int = Field(foreign_key="mediums.id")
+    medium_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("mediums.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
 
 
 class Subject(SubjectBase, BaseModel, table=True):
@@ -134,7 +141,9 @@ class SubjectRead(SubjectBase):
 # --------------------
 class ChapterBase(SQLModel):
     name: str
-    subject_id: int = Field(foreign_key="subjects.id")
+    subject_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
     icon_url: Optional[str] = None
     is_premium: bool = Field(default=False)
     enabled: bool = Field(default=True)
