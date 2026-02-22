@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from loguru import logger
 
-from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks, vector_store_qa
+from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks
 
 
 MAX_TOPIC_CHARS = 12000
@@ -99,16 +99,30 @@ def get_topic_context(chapter_id: int, topic: str) -> str:
 
 
 def get_qa_context(chapter_id: int) -> str:
-    """Fetch all Q&A pattern content for a chapter from the vector store."""
+    """Fetch all Q&A pattern content for a chapter directly from the DB."""
+    from app.core.config import settings
+    import psycopg
+
     try:
-        docs = vector_store_qa.similarity_search(
-            query="important questions and answers",
-            k=50,
-            filter={"chapter_id": str(chapter_id)},
-        )
-        if not docs:
-            return ""
-        return "\n\n".join([doc.page_content for doc in docs])
+        postgres_url = settings.POSTGRES_URL.replace("postgresql+psycopg://", "postgresql://")
+        with psycopg.connect(postgres_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT document
+                    FROM langchain_pg_embedding
+                    WHERE collection_id = (
+                        SELECT uuid FROM langchain_pg_collection WHERE name = 'qa_patterns'
+                    )
+                    AND cmetadata->>'chapter_id' = %s
+                    ORDER BY (cmetadata->>'chunk_index')::int NULLS LAST
+                    """,
+                    (str(chapter_id),),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return ""
+                return "\n\n".join([row[0] for row in rows])
     except Exception as e:
         logger.warning(f"Failed to fetch QA patterns for chapter {chapter_id}: {e}")
         return ""
