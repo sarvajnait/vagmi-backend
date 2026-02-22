@@ -8,3 +8,4 @@ from .llm_usage import *
 from .activities import *
 from .activity_jobs import *
 from .chapter_artifacts import *
+from .notifications import Notification

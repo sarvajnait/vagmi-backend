@@ -97,6 +97,23 @@ async def update_profile(
     )
 
 
+class FcmTokenRequest(BaseModel):
+    token: str
+
+
+@router.post("/fcm-token", status_code=204)
+async def register_fcm_token(
+    body: FcmTokenRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Register or refresh the FCM device token for push notifications."""
+    user = await session.get(User, current_user.id)
+    user.fcm_token = body.token
+    session.add(user)
+    await session.commit()
+
+
 @router.delete("/delete-charan")
 async def delete_charan(
     session: AsyncSession = Depends(get_session),

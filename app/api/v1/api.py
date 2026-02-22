@@ -14,6 +14,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.users import router as users_router
 from app.api.v1.admin.auth import router as admin_router
 from app.api.v1.admin.users import router as admin_users_router
+from app.api.v1.admin.notifications import router as admin_notifications_router
 from app.api.v1.files import router as files_router
 from app.api.v1.llm_resources import router as llm_resources_router
 from app.api.v1.student_content import router as student_content_router
@@ -56,6 +57,7 @@ api_router.include_router(activity_groups_router, prefix="/activity-groups", tag
 api_router.include_router(topics_router, prefix="/topics", tags=["topics"])
 api_router.include_router(admin_router, prefix="/admin/auth", tags=["admin"])
 api_router.include_router(admin_users_router, prefix="/admin/users", tags=["admin"])
+api_router.include_router(admin_notifications_router, prefix="/admin/notifications", tags=["admin"])
 
 
 @api_router.get("/health")

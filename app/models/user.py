@@ -40,6 +40,8 @@ class User(BaseModel, table=True):
         back_populates="user", cascade_delete=True
     )
 
+    fcm_token: Optional[str] = Field(default=None)
+
     def verify_password(self, password: str) -> bool:
         """Verify if the provided password matches the hash."""
         return bcrypt.checkpw(

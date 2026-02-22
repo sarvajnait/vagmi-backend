@@ -150,6 +150,9 @@ class Settings:
         self.RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
         self.RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
 
+        self.FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "")
+        self.FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+
         # JWT Configuration
         self.JWT_SECRET_KEY = os.getenv(
             "JWT_SECRET_KEY",
