@@ -1,12 +1,12 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Literal, Optional, Union
 import json
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from loguru import logger
-from pydantic import BaseModel
 
 from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks
 
@@ -14,37 +14,13 @@ from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_text
 MAX_TOPIC_CHARS = 12000
 
 
-# --------------------
-# Pydantic output schemas
-# --------------------
-
-class TopicItem(BaseModel):
-    title: str
-    summary: str
-
-class TopicList(BaseModel):
-    topics: List[TopicItem]
-
-
-class MCQActivity(BaseModel):
-    type: Literal["mcq"]
-    question_text: str
-    options: List[str]
-    correct_answer: str
-    answer_description: Optional[str] = None
-
-class DescriptiveActivity(BaseModel):
-    type: Literal["descriptive"]
-    question_text: str
-    answer_text: str
-
-class ActivityList(BaseModel):
-    activities: List[Union[MCQActivity, DescriptiveActivity]]
-
-
-class EvaluationResult(BaseModel):
-    score: int
-    feedback: List[str]
+def _extract_json(text: str) -> Dict[str, Any]:
+    if not text:
+        raise ValueError("Empty AI response")
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not match:
+        raise ValueError("No JSON object found in AI response")
+    return json.loads(match.group(0))
 
 
 # --------------------
@@ -185,20 +161,23 @@ def _generate_topics_from_text(
         "- Conceptual Pillars: Each topic name must be a significant 'Conceptual Pillar' rather than a minor detail.\n"
         "- Exhaustive Logic: The final list must be structured so that 'Important Questions' generated for these "
         "topics will collectively cover the entire chapter without any gaps.\n\n"
-        "Keep titles short and summaries 1 sentence."
+        "Keep titles short and summaries 1 sentence.\n"
+        'Return JSON in this schema only: { "topics": [ { "title": "...", "summary": "..." } ] }\n'
         f"{_language_instruction(medium_name)}\n\n"
         f"MEDIUM: {medium_name}\n"
         f"CHAPTER TEXT:\n{text}"
     )
 
-    llm = _get_llm().with_structured_output(TopicList)
-    result: TopicList = llm.invoke(
+    llm = _get_llm()
+    response = llm.invoke(
         [
-            SystemMessage(content="Act as an expert Curriculum Designer."),
+            SystemMessage(content="Act as an expert Curriculum Designer. Your output must be strict JSON only — no markdown, no prose, no extra text."),
             HumanMessage(content=human_prompt),
         ]
     )
-    return [t.model_dump() for t in result.topics]
+    payload = _extract_json(response.content)
+    topics = payload.get("topics", [])
+    return topics if isinstance(topics, list) else []
 
 
 def _consolidate_topics(
@@ -216,19 +195,22 @@ def _consolidate_topics(
         "- Deduplication: Merge topics that refer to the same concept into one well-named topic.\n"
         "- Exhaustive Logic: The final list must be thorough enough that generating 'Important Questions' "
         "for each topic would cover the entire chapter without gaps.\n\n"
+        'Return JSON in this schema only: { "topics": [ { "title": "...", "summary": "..." } ] }\n'
         f"{_language_instruction(medium_name)}\n\n"
         f"MEDIUM: {medium_name}\n\n"
         f"TOPICS:\n{json.dumps(topics)}"
     )
 
-    llm = _get_llm().with_structured_output(TopicList)
-    result: TopicList = llm.invoke(
+    llm = _get_llm()
+    response = llm.invoke(
         [
-            SystemMessage(content="Act as an expert Curriculum Designer."),
+            SystemMessage(content="Act as an expert Curriculum Designer. Your output must be strict JSON only — no markdown, no prose, no extra text."),
             HumanMessage(content=human_prompt),
         ]
     )
-    return [t.model_dump() for t in result.topics]
+    payload = _extract_json(response.content)
+    topics = payload.get("topics", [])
+    return topics if isinstance(topics, list) else []
 
 
 def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, str]]:
@@ -343,21 +325,18 @@ Example for {lang_name} medium:
     )
 
     logger.info(f"[chapter={chapter_id}] Calling LLM for activity generation (prompt_length={len(human_prompt)})")
-    llm = _get_llm().with_structured_output(ActivityList)
-    result: ActivityList = llm.invoke(
+    llm = _get_llm()
+    response = llm.invoke(
         [
-            SystemMessage(
-                content=(
-                    "You are an expert Pedagogy & Assessment Design AI. "
-                    "Generate high-quality, exam-standard activities."
-                )
-            ),
+            SystemMessage(content="You are an expert Pedagogy & Assessment Design AI. Return ONLY a JSON object. No markdown, no prose."),
             HumanMessage(content=human_prompt),
         ]
     )
-    activities = result.activities
+    payload = _extract_json(response.content)
+    activities = payload.get("activities", [])
+    activities = activities if isinstance(activities, list) else []
     logger.info(f"[chapter={chapter_id}] LLM returned {len(activities)} raw activities")
-    return [a.model_dump() for a in activities]
+    return activities
 
 
 # --------------------
@@ -498,7 +477,8 @@ def evaluate_descriptive_answer(
         language_instruction = f"\n\nIMPORTANT: Generate feedback in {lang_name} language since this is {lang_name} medium."
 
     human_prompt = (
-        "Evaluate the student's answer compared to the correct answer.\n\n"
+        "Evaluate the student's answer compared to the correct answer. "
+        'Return JSON in this schema: { "score": 75, "feedback": ["Good: ...", "Improve: ..."] }\n\n'
         "Requirements:\n"
         "- score: 0-100 based on correctness, completeness, and clarity\n"
         "- feedback: Exactly 3-4 bullet points\n"
@@ -511,16 +491,19 @@ def evaluate_descriptive_answer(
         f"STUDENT'S ANSWER:\n{user_answer}"
     )
 
-    llm = _get_llm().with_structured_output(EvaluationResult)
-    result: EvaluationResult = llm.invoke(
+    llm = _get_llm()
+    response = llm.invoke(
         [
-            SystemMessage(content="You are an expert educational evaluator."),
+            SystemMessage(content="You are an assistant that outputs strict JSON only. Do not include markdown or extra text."),
             HumanMessage(content=human_prompt),
         ]
     )
-
-    score = max(0, min(100, result.score))
+    payload = _extract_json(response.content)
+    score = max(0, min(100, int(payload.get("score", 0))))
+    feedback = payload.get("feedback", [])
+    if not isinstance(feedback, list):
+        feedback = []
     return {
         "score": score,
-        "feedback": result.feedback,
+        "feedback": feedback,
     }
