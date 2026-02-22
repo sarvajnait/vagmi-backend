@@ -72,7 +72,7 @@ def upgrade() -> None:
     _recreate_fk("chapter_activities", "chapter_id", "chapters", "id", "CASCADE", "fk_chapter_activities_chapter_id")
     _recreate_fk("chapter_activities", "activity_group_id", "activity_groups", "id", "CASCADE", "fk_chapter_activities_group_id")
     _recreate_fk("activity_play_sessions", "chapter_id", "chapters", "id", "CASCADE", "fk_play_sessions_chapter_id")
-    _recreate_fk("activity_play_sessions", "user_id", "user", "id", "CASCADE", "fk_play_sessions_user_id")
+    _recreate_fk("activity_play_sessions", "user_id", '"user"', "id", "CASCADE", "fk_play_sessions_user_id")
     _recreate_fk("activity_answers", "session_id", "activity_play_sessions", "id", "CASCADE", "fk_activity_answers_session_id")
     _recreate_fk("activity_answers", "activity_id", "chapter_activities", "id", "CASCADE", "fk_activity_answers_activity_id")
 
@@ -106,7 +106,7 @@ def downgrade() -> None:
         ("chapter_activities", "chapter_id", "chapters", "id", "fk_chapter_activities_chapter_id"),
         ("chapter_activities", "activity_group_id", "activity_groups", "id", "fk_chapter_activities_group_id"),
         ("activity_play_sessions", "chapter_id", "chapters", "id", "fk_play_sessions_chapter_id"),
-        ("activity_play_sessions", "user_id", "user", "id", "fk_play_sessions_user_id"),
+        ("activity_play_sessions", "user_id", '"user"', "id", "fk_play_sessions_user_id"),
         ("activity_answers", "session_id", "activity_play_sessions", "id", "fk_activity_answers_session_id"),
         ("activity_answers", "activity_id", "chapter_activities", "id", "fk_activity_answers_activity_id"),
         ("chapter_artifacts", "chapter_id", "chapters", "id", "fk_chapter_artifacts_chapter_id"),
