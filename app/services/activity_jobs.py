@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic, Medium, ChapterArtifact, StudentTextbook, StudentNotes
+from app.models.activities import ActivityGroup
 from app.services.activity_ai import generate_activities, generate_topics, normalize_activity, generate_chapter_summary
 from app.services.database import async_session_maker
 
@@ -237,11 +238,131 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
     artifact.content = summary
     artifact.status = "completed"
     session.add(artifact)
+    await session.commit()
+
+    # 4. Generate topics and save to DB
+    from loguru import logger
+    topics_raw = await asyncio.get_event_loop().run_in_executor(
+        None, generate_topics, chapter_id, medium_name
+    )
+    cleaned_topics = _clean_topics(topics_raw)
+
+    if not cleaned_topics:
+        logger.warning(f"No topics generated for chapter_id={chapter_id}, skipping activity generation")
+        job.result = {
+            "documents_processed": doc_count,
+            "artifact_id": artifact.id,
+            "chapter_id": chapter_id,
+            "topics_count": 0,
+            "activity_groups_count": 0,
+        }
+        return
+
+    # Get next sort_order for topics
+    topic_order_result = await session.exec(
+        select(func.max(Topic.sort_order)).where(Topic.chapter_id == chapter_id)
+    )
+    max_topic_order = topic_order_result.first()
+    if isinstance(max_topic_order, tuple):
+        max_topic_order = max_topic_order[0]
+    next_topic_order = (max_topic_order or 0) + 1
+
+    saved_topics = []
+    for t in cleaned_topics:
+        topic = Topic(
+            title=t["title"],
+            summary=t.get("summary"),
+            chapter_id=chapter_id,
+            sort_order=next_topic_order,
+        )
+        next_topic_order += 1
+        session.add(topic)
+        await session.flush()
+        saved_topics.append(topic)
+
+    logger.info(f"Saved {len(saved_topics)} topics for chapter_id={chapter_id}")
+
+    # 5. For each topic: create an ActivityGroup + generate activities
+    # Get starting sort_order for activity groups
+    group_order_result = await session.exec(
+        select(func.max(ActivityGroup.sort_order)).where(
+            ActivityGroup.chapter_id == chapter_id
+        )
+    )
+    max_group_order = group_order_result.first()
+    if isinstance(max_group_order, tuple):
+        max_group_order = max_group_order[0]
+    next_group_order = (max_group_order or 0) + 1
+
+    total_activities_created = 0
+    MCQ_COUNT = 7
+    DESCRIPTIVE_COUNT = 3
+
+    for topic in saved_topics:
+        # Create activity group with same name as topic
+        activity_group = ActivityGroup(
+            name=topic.title[:255],
+            chapter_id=chapter_id,
+            sort_order=next_group_order,
+        )
+        session.add(activity_group)
+        await session.flush()
+        next_group_order += 1
+
+        # Generate activities for this topic
+        try:
+            raw = await asyncio.get_event_loop().run_in_executor(
+                None,
+                generate_activities,
+                chapter_id,
+                [topic.title],
+                MCQ_COUNT,
+                DESCRIPTIVE_COUNT,
+                medium_name,
+            )
+        except Exception as exc:
+            logger.warning(f"Activity generation failed for topic '{topic.title}': {exc}")
+            continue
+
+        normalized = []
+        for item in raw:
+            norm = normalize_activity(item)
+            if norm:
+                normalized.append(norm)
+
+        normalized = normalized[: MCQ_COUNT + DESCRIPTIVE_COUNT]
+
+        next_activity_order = 1
+        for item in normalized:
+            activity = ChapterActivity(
+                activity_group_id=activity_group.id,
+                chapter_id=chapter_id,
+                type=item["type"],
+                question_text=item["question_text"],
+                options=item.get("options"),
+                correct_option_index=item.get("correct_option_index"),
+                answer_text=item.get("answer_text"),
+                answer_image_url=None,
+                is_published=True,
+                sort_order=next_activity_order,
+            )
+            next_activity_order += 1
+            session.add(activity)
+
+        await session.flush()
+        total_activities_created += len(normalized)
+        logger.info(
+            f"Created {len(normalized)} activities for topic '{topic.title}' "
+            f"(group_id={activity_group.id})"
+        )
 
     job.result = {
         "documents_processed": doc_count,
         "artifact_id": artifact.id,
         "chapter_id": chapter_id,
+        "topics_count": len(saved_topics),
+        "activity_groups_count": len(saved_topics),
+        "activities_count": total_activities_created,
     }
 
 
