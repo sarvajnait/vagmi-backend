@@ -130,7 +130,7 @@ async def verify_payment(
     # Create subscription
     plan = await session.get(SubscriptionPlan, db_order.plan_id)
     starts_at = date.today()
-    ends_at = starts_at + timedelta(days=plan.duration_days)
+    ends_at = plan.fixed_end_date if plan.fixed_end_date else starts_at + timedelta(days=plan.duration_days)
 
     subscription = UserSubscription(
         user_id=current_user.id,
@@ -203,7 +203,7 @@ async def razorpay_webhook(request: Request, session: AsyncSession = Depends(get
             if not existing.first():
                 plan = await session.get(SubscriptionPlan, db_order.plan_id)
                 starts_at = date.today()
-                ends_at = starts_at + timedelta(days=plan.duration_days)
+                ends_at = plan.fixed_end_date if plan.fixed_end_date else starts_at + timedelta(days=plan.duration_days)
                 session.add(UserSubscription(
                     user_id=db_order.user_id,
                     plan_id=plan.id,

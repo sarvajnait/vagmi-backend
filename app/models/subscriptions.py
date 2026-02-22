@@ -19,6 +19,7 @@ class SubscriptionPlanBase(SQLModel):
     medium_id: int = Field(foreign_key="mediums.id")
     amount_inr: int = Field(default=99)
     duration_days: int = Field(default=30)
+    fixed_end_date: Optional[date] = Field(default=None)
     is_active: bool = Field(default=True)
     description: Optional[str] = None
 
@@ -43,6 +44,7 @@ class SubscriptionPlanUpdate(SQLModel):
     medium_id: Optional[int] = None
     amount_inr: Optional[int] = None
     duration_days: Optional[int] = None
+    fixed_end_date: Optional[date] = None
     is_active: Optional[bool] = None
     description: Optional[str] = None
 
