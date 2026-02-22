@@ -326,7 +326,7 @@ def generate_activities(
         f"for EACH of the following topics, based on the chapter text below.\n\n"
         "Core Constraints:\n"
         "- Generate questions for EVERY topic listed — do not skip any.\n"
-        "- For each topic: exactly {mcq_count} MCQs and exactly {descriptive_count} descriptive questions.\n"
+        f"- For each topic: exactly {mcq_count} MCQs and exactly {descriptive_count} descriptive questions.\n"
         "- MCQ: provide 4 plausible options, correct_answer must be the EXACT text of one option.\n"
         "- MCQ: include answer_description (1-2 sentence explanation of why the correct answer is right).\n"
         "- Descriptive: include a full model answer_text.\n"
