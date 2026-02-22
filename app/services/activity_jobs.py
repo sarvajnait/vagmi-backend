@@ -311,6 +311,7 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
 
     # 6. Generate activities for all topics in parallel
     async def _generate_for_topic(topic: Topic, activity_group: ActivityGroup):
+        logger.info(f"[chapter={chapter_id}] Generating activities for topic='{topic.title}' group_id={activity_group.id}")
         try:
             raw = await asyncio.get_event_loop().run_in_executor(
                 None,
@@ -322,14 +323,18 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
                 medium_name,
             )
         except Exception as exc:
-            logger.warning(f"Activity generation failed for topic '{topic.title}': {exc}")
+            logger.error(f"[chapter={chapter_id}] Activity generation FAILED for topic='{topic.title}': {exc}", exc_info=True)
             return activity_group.id, []
 
+        logger.debug(f"[chapter={chapter_id}] topic='{topic.title}' raw activities returned: {len(raw)}")
         normalized = []
         for item in raw:
             norm = normalize_activity(item)
             if norm:
                 normalized.append(norm)
+            else:
+                logger.warning(f"[chapter={chapter_id}] topic='{topic.title}' normalize_activity rejected item: {item}")
+        logger.info(f"[chapter={chapter_id}] topic='{topic.title}' normalized={len(normalized)} / raw={len(raw)}")
         return activity_group.id, normalized[: MCQ_COUNT + DESCRIPTIVE_COUNT]
 
     results = await asyncio.gather(

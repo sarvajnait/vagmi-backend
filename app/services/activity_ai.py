@@ -74,6 +74,7 @@ def get_full_chapter_text(chapter_id: int) -> str:
     from app.core.config import settings
     import psycopg
 
+    logger.debug(f"[chapter={chapter_id}] Fetching full chapter text from DB")
     try:
         postgres_url = settings.POSTGRES_URL.replace("postgresql+psycopg://", "postgresql://")
 
@@ -94,18 +95,22 @@ def get_full_chapter_text(chapter_id: int) -> str:
                 rows = cur.fetchall()
 
                 if not rows:
+                    logger.warning(f"[chapter={chapter_id}] No embeddings found in llm_textbooks — chapter has no uploaded content")
                     return ""
 
                 raw_chunks = [row[0] for row in rows]
-                return merge_chunks_remove_overlap(raw_chunks, overlap_chars=200)
+                text = merge_chunks_remove_overlap(raw_chunks, overlap_chars=200)
+                logger.debug(f"[chapter={chapter_id}] Fetched {len(rows)} chunks, merged text length={len(text)}")
+                return text
     except Exception as e:
-        logger.error(f"Error fetching chapter text directly: {e}")
+        logger.error(f"[chapter={chapter_id}] Error fetching chapter text from DB: {e} — falling back to similarity search")
         docs = vector_store_textbooks.similarity_search(
             query="",
             k=1000,
             filter={"chapter_id": str(chapter_id)},
         )
         if not docs:
+            logger.warning(f"[chapter={chapter_id}] Fallback similarity search also returned no docs")
             return ""
         docs.sort(key=lambda d: d.metadata.get("chunk_index", 0))
         raw_chunks = [d.page_content for d in docs]
@@ -136,10 +141,12 @@ def get_qa_context(chapter_id: int) -> str:
                 )
                 rows = cur.fetchall()
                 if not rows:
+                    logger.debug(f"[chapter={chapter_id}] No QA patterns found")
                     return ""
+                logger.debug(f"[chapter={chapter_id}] Fetched {len(rows)} QA pattern chunks")
                 return "\n\n".join([row[0] for row in rows])
     except Exception as e:
-        logger.warning(f"Failed to fetch QA patterns for chapter {chapter_id}: {e}")
+        logger.warning(f"[chapter={chapter_id}] Failed to fetch QA patterns: {e}")
         return ""
 
 
@@ -225,16 +232,24 @@ def _consolidate_topics(
 
 
 def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, str]]:
+    logger.info(f"[chapter={chapter_id}] Starting topic generation (medium={medium_name!r})")
     chapter_text = get_full_chapter_text(chapter_id)
     if not chapter_text:
+        logger.warning(f"[chapter={chapter_id}] No chapter text — skipping topic generation")
         return []
 
+    logger.info(f"[chapter={chapter_id}] Chapter text length={len(chapter_text)}")
     all_topics: List[Dict[str, str]] = []
     if len(chapter_text) <= MAX_TOPIC_CHARS:
+        logger.debug(f"[chapter={chapter_id}] Single chunk topic extraction")
         all_topics.extend(_generate_topics_from_text(chapter_text, medium_name))
-        return _consolidate_topics(all_topics, medium_name=medium_name)
+        logger.info(f"[chapter={chapter_id}] Topics before consolidation: {len(all_topics)}")
+        final = _consolidate_topics(all_topics, medium_name=medium_name)
+        logger.info(f"[chapter={chapter_id}] Final topics after consolidation: {len(final)}")
+        return final
 
     chunks = _split_text(chapter_text, chunk_size=MAX_TOPIC_CHARS, chunk_overlap=400)
+    logger.info(f"[chapter={chapter_id}] Chapter too large, split into {len(chunks)} chunks for parallel extraction")
     with ThreadPoolExecutor(max_workers=min(len(chunks), 5)) as executor:
         futures = {
             executor.submit(_generate_topics_from_text, chunk, medium_name): i
@@ -245,15 +260,19 @@ def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, st
             idx = futures[future]
             try:
                 chunk_results[idx] = future.result()
+                logger.debug(f"[chapter={chapter_id}] Chunk {idx} returned {len(chunk_results[idx])} topics")
             except Exception as exc:
-                logger.warning(f"Topic extraction failed for chunk {idx}: {exc}")
+                logger.warning(f"[chapter={chapter_id}] Topic extraction failed for chunk {idx}: {exc}")
                 chunk_results[idx] = []
         for i in range(len(chunks)):
             all_topics.extend(chunk_results.get(i, []))
 
+    logger.info(f"[chapter={chapter_id}] Total topics before consolidation: {len(all_topics)}")
     if not all_topics:
         return []
-    return _consolidate_topics(all_topics, medium_name=medium_name)
+    final = _consolidate_topics(all_topics, medium_name=medium_name)
+    logger.info(f"[chapter={chapter_id}] Final topics after consolidation: {len(final)}")
+    return final
 
 
 # --------------------
@@ -267,7 +286,12 @@ def generate_activities(
     descriptive_count: int,
     medium_name: str = "",
 ) -> List[Dict[str, Any]]:
+    logger.info(f"[chapter={chapter_id}] Generating activities: topics={topic_titles}, mcq={mcq_count}, descriptive={descriptive_count}, medium={medium_name!r}")
     topic_context = get_full_chapter_text(chapter_id)
+    if not topic_context:
+        logger.warning(f"[chapter={chapter_id}] Empty chapter text — LLM will have no context")
+    else:
+        logger.debug(f"[chapter={chapter_id}] Chapter context length={len(topic_context)}")
     qa_context = get_qa_context(chapter_id)
     topics_str = ", ".join(topic_titles)
 
@@ -318,6 +342,7 @@ Example for {lang_name} medium:
         + f"TEXTBOOK CONTEXT:\n{topic_context}"
     )
 
+    logger.info(f"[chapter={chapter_id}] Calling LLM for activity generation (prompt_length={len(human_prompt)})")
     llm = _get_llm().with_structured_output(ActivityList)
     result: ActivityList = llm.invoke(
         [
@@ -330,7 +355,9 @@ Example for {lang_name} medium:
             HumanMessage(content=human_prompt),
         ]
     )
-    return [a.model_dump() for a in result.activities]
+    activities = result.activities
+    logger.info(f"[chapter={chapter_id}] LLM returned {len(activities)} raw activities")
+    return [a.model_dump() for a in activities]
 
 
 # --------------------
