@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from loguru import logger
 
-from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks
+from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks, vector_store_qa
 
 
 MAX_TOPIC_CHARS = 12000
@@ -96,6 +96,22 @@ def get_topic_context(chapter_id: int, topic: str) -> str:
     if not docs:
         return ""
     return "\n\n".join([doc.page_content for doc in docs])
+
+
+def get_qa_context(chapter_id: int) -> str:
+    """Fetch all Q&A pattern content for a chapter from the vector store."""
+    try:
+        docs = vector_store_qa.similarity_search(
+            query="important questions and answers",
+            k=50,
+            filter={"chapter_id": str(chapter_id)},
+        )
+        if not docs:
+            return ""
+        return "\n\n".join([doc.page_content for doc in docs])
+    except Exception as e:
+        logger.warning(f"Failed to fetch QA patterns for chapter {chapter_id}: {e}")
+        return ""
 
 
 def _generate_topics_from_text(
@@ -278,6 +294,9 @@ def generate_activities(
     else:
         topic_context = "\n\n".join(all_context_parts)[:MAX_CONTEXT_CHARS]
 
+    # Fetch previous year Q&A patterns
+    qa_context = get_qa_context(chapter_id)
+
     topics_str = ", ".join(topic_titles)
 
     system_prompt = (
@@ -337,7 +356,13 @@ Example for {lang_name} medium:
         f"{language_instruction}\n\n"
         f"MEDIUM: {medium_name}\n"
         f"TOPICS: {topics_str}\n\n"
-        f"CONTEXT:\n{topic_context}"
+        + (
+            f"IMPORTANT Q&A (Previous Year / Must-Study):\n"
+            f"These are high-priority questions from previous exams. Anchor-First: adapt and incorporate "
+            f"these into your output before filling gaps from the textbook.\n{qa_context}\n\n"
+            if qa_context else ""
+        )
+        + f"TEXTBOOK CONTEXT:\n{topic_context}"
     )
 
     llm = _get_llm()
