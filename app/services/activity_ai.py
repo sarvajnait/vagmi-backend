@@ -13,7 +13,6 @@ from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_text
 
 MAX_TOPIC_CHARS = 12000
 MAX_CONTEXT_CHARS = 15000
-FINAL_TOPIC_COUNT = 6
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -161,16 +160,16 @@ def _generate_topics_from_text(
         )
 
     human_prompt = (
-        "Analyze the provided chapter text and extract a comprehensive list of key topics "
+        "Analyze the provided chapter text and extract a comprehensive yet concise list of key topics "
         "that represent the entire scope of the content.\n\n"
         "Requirements:\n"
+        "- Optimized Topic Count: Extract between 6 to 15 topics depending on the chapter's length and complexity. "
+        "Avoid over-segmentation — if two concepts are closely related, group them under a single broader heading.\n"
         "- Complete Coverage: Ensure that every concept, definition, and principle mentioned "
         "in the chapter is mapped to one of the topics. No part of the chapter should be left out.\n"
-        "- Dynamic Count: Do not limit yourself to a specific number of topics. Extract as many "
-        "as necessary to achieve 100% coverage, but keep each topic distinct to avoid redundancy.\n"
-        "- Topic Definition: Each topic must be named accurately according to the text and defined clearly.\n"
-        "- Exhaustive Logic: The final list of topics must be so thorough that if you were to generate "
-        "'Important Questions' for each one, the resulting question bank would cover the entire chapter without any gaps.\n\n"
+        "- Conceptual Pillars: Each topic name must be a significant 'Conceptual Pillar' rather than a minor detail.\n"
+        "- Exhaustive Logic: The final list must be structured so that 'Important Questions' generated for these "
+        "topics will collectively cover the entire chapter without any gaps.\n\n"
         "Return JSON in this schema only:\n"
         '{ "topics": [ { "title": "...", "summary": "..." } ] }\n'
         "Keep titles short and summaries 1 sentence."
@@ -191,7 +190,6 @@ def _generate_topics_from_text(
 def _consolidate_topics(
     topics: List[Dict[str, str]],
     medium_name: str = "",
-    final_topic_count: int = FINAL_TOPIC_COUNT,
 ) -> List[Dict[str, str]]:
     system_prompt = (
         "Act as an expert Curriculum Designer. "
@@ -226,9 +224,10 @@ def _consolidate_topics(
         "Given the topic candidates below extracted from different parts of a chapter, "
         "deduplicate and consolidate them into the final comprehensive topic list.\n\n"
         "Requirements:\n"
+        "- Optimized Topic Count: Return between 6 to 15 topics depending on the chapter's breadth. "
+        "Avoid over-segmentation — merge closely related subtopics under a single broader heading.\n"
         "- Complete Coverage: Preserve all distinct concepts — do not drop topics that represent unique content.\n"
-        f"- Return EXACTLY {final_topic_count} topics in the final output.\n"
-        "- Merge related subtopics into broader, clear topics so full chapter coverage is preserved.\n"
+        "- Conceptual Pillars: Each topic name must be a significant 'Conceptual Pillar' rather than a minor detail.\n"
         "- Deduplication: Merge topics that refer to the same concept into one well-named topic.\n"
         "- Exhaustive Logic: The final list must be thorough enough that generating 'Important Questions' "
         "for each topic would cover the entire chapter without gaps.\n\n"
@@ -259,7 +258,6 @@ def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, st
         return _consolidate_topics(
             all_topics,
             medium_name=medium_name,
-            final_topic_count=FINAL_TOPIC_COUNT,
         )
 
     chunks = _split_text(chapter_text, chunk_size=MAX_TOPIC_CHARS, chunk_overlap=400)
