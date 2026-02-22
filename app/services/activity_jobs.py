@@ -282,8 +282,7 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
 
     logger.info(f"Saved {len(saved_topics)} topics for chapter_id={chapter_id}")
 
-    # 5. For each topic: create an ActivityGroup + generate activities
-    # Get starting sort_order for activity groups
+    # 5. Create all ActivityGroups first (sequential — need flushed IDs before LLM calls)
     group_order_result = await session.exec(
         select(func.max(ActivityGroup.sort_order)).where(
             ActivityGroup.chapter_id == chapter_id
@@ -294,12 +293,11 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
         max_group_order = max_group_order[0]
     next_group_order = (max_group_order or 0) + 1
 
-    total_activities_created = 0
     MCQ_COUNT = 7
     DESCRIPTIVE_COUNT = 3
 
+    topic_groups: list[tuple[Topic, ActivityGroup]] = []
     for topic in saved_topics:
-        # Create activity group with same name as topic
         activity_group = ActivityGroup(
             name=topic.title[:255],
             chapter_id=chapter_id,
@@ -308,8 +306,10 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
         session.add(activity_group)
         await session.flush()
         next_group_order += 1
+        topic_groups.append((topic, activity_group))
 
-        # Generate activities for this topic
+    # 6. Generate activities for all topics in parallel
+    async def _generate_for_topic(topic: Topic, activity_group: ActivityGroup):
         try:
             raw = await asyncio.get_event_loop().run_in_executor(
                 None,
@@ -322,20 +322,29 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
             )
         except Exception as exc:
             logger.warning(f"Activity generation failed for topic '{topic.title}': {exc}")
-            continue
+            return activity_group.id, []
 
         normalized = []
         for item in raw:
             norm = normalize_activity(item)
             if norm:
                 normalized.append(norm)
+        return activity_group.id, normalized[: MCQ_COUNT + DESCRIPTIVE_COUNT]
 
-        normalized = normalized[: MCQ_COUNT + DESCRIPTIVE_COUNT]
+    results = await asyncio.gather(
+        *[_generate_for_topic(topic, group) for topic, group in topic_groups]
+    )
 
+    # Save all activities (sequential DB writes after parallel LLM calls)
+    total_activities_created = 0
+    group_id_to_topic = {group.id: topic for topic, group in topic_groups}
+
+    for group_id, normalized in results:
+        topic = group_id_to_topic[group_id]
         next_activity_order = 1
         for item in normalized:
             activity = ChapterActivity(
-                activity_group_id=activity_group.id,
+                activity_group_id=group_id,
                 chapter_id=chapter_id,
                 type=item["type"],
                 question_text=item["question_text"],
@@ -348,12 +357,11 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
             )
             next_activity_order += 1
             session.add(activity)
-
         await session.flush()
         total_activities_created += len(normalized)
         logger.info(
             f"Created {len(normalized)} activities for topic '{topic.title}' "
-            f"(group_id={activity_group.id})"
+            f"(group_id={group_id})"
         )
 
     job.result = {

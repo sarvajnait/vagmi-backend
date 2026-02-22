@@ -1,5 +1,6 @@
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -232,8 +233,21 @@ def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, st
         )
 
     chunks = _split_text(chapter_text, chunk_size=MAX_TOPIC_CHARS, chunk_overlap=400)
-    for chunk in chunks:
-        all_topics.extend(_generate_topics_from_text(chunk, medium_name))
+    with ThreadPoolExecutor(max_workers=min(len(chunks), 5)) as executor:
+        futures = {
+            executor.submit(_generate_topics_from_text, chunk, medium_name): i
+            for i, chunk in enumerate(chunks)
+        }
+        chunk_results: dict[int, list] = {}
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                chunk_results[idx] = future.result()
+            except Exception as exc:
+                logger.warning(f"Topic extraction failed for chunk {idx}: {exc}")
+                chunk_results[idx] = []
+        for i in range(len(chunks)):
+            all_topics.extend(chunk_results.get(i, []))
 
     if not all_topics:
         return []
