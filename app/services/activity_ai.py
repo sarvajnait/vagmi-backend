@@ -113,16 +113,6 @@ def get_full_chapter_text(chapter_id: int) -> str:
         return merge_chunks_remove_overlap(raw_chunks, overlap_chars=200)
 
 
-def get_topic_context(chapter_id: int, topic: str) -> str:
-    docs = vector_store_textbooks.similarity_search(
-        query=topic,
-        k=6,
-        filter={"chapter_id": str(chapter_id)},
-    )
-    if not docs:
-        return ""
-    return "\n\n".join([doc.page_content for doc in docs])
-
 
 def get_qa_context(chapter_id: int) -> str:
     """Fetch all Q&A pattern content for a chapter directly from the DB."""
@@ -278,17 +268,8 @@ def generate_activities(
     descriptive_count: int,
     medium_name: str = "",
 ) -> List[Dict[str, Any]]:
-    all_context_parts = []
-    for title in topic_titles:
-        ctx = get_topic_context(chapter_id, title)
-        if ctx:
-            all_context_parts.append(ctx)
-
-    if not all_context_parts:
-        chapter_text = get_full_chapter_text(chapter_id)
-        topic_context = chapter_text[:MAX_CONTEXT_CHARS]
-    else:
-        topic_context = "\n\n".join(all_context_parts)[:MAX_CONTEXT_CHARS]
+    chapter_text = get_full_chapter_text(chapter_id)
+    topic_context = chapter_text[:MAX_CONTEXT_CHARS]
 
     qa_context = get_qa_context(chapter_id)
     topics_str = ", ".join(topic_titles)
