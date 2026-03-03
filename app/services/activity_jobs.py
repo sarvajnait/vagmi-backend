@@ -6,7 +6,7 @@ from sqlmodel import select
 
 from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic, Medium, ChapterArtifact, StudentTextbook, StudentNotes
 from app.models.activities import ActivityGroup
-from app.services.activity_ai import generate_activities, generate_topics, normalize_activity, generate_chapter_summary
+from app.services.activity_ai import generate_activities, generate_topics, normalize_activity, generate_chapter_summary, generate_one_mark_questions, generate_important_questions
 from app.services.database import async_session_maker
 
 
@@ -198,29 +198,36 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
     medium = await session.get(Medium, subject.medium_id) if subject else None
     medium_name = medium.name if medium else ""
 
-    # 1. Mark artifact as processing (upsert)
-    existing = await session.exec(
-        select(ChapterArtifact).where(
-            ChapterArtifact.chapter_id == chapter_id,
-            ChapterArtifact.artifact_type == "chapter_summary",
+    # 1. Mark all 3 artifacts as processing (upsert)
+    import asyncio
+    from loguru import logger
+
+    artifact_types = ["chapter_summary", "one_mark_questions", "important_questions"]
+    artifacts: dict[str, ChapterArtifact] = {}
+    for atype in artifact_types:
+        existing = await session.exec(
+            select(ChapterArtifact).where(
+                ChapterArtifact.chapter_id == chapter_id,
+                ChapterArtifact.artifact_type == atype,
+            )
         )
-    )
-    artifact = existing.first()
-    if artifact is None:
-        artifact = ChapterArtifact(
-            chapter_id=chapter_id,
-            artifact_type="chapter_summary",
-            status="processing",
-        )
-        session.add(artifact)
-    else:
-        artifact.status = "processing"
-        artifact.error = None
+        artifact = existing.first()
+        if artifact is None:
+            artifact = ChapterArtifact(
+                chapter_id=chapter_id,
+                artifact_type=atype,
+                status="processing",
+            )
+            session.add(artifact)
+        else:
+            artifact.status = "processing"
+            artifact.error = None
+        artifacts[atype] = artifact
     await session.commit()
-    await session.refresh(artifact)
+    for artifact in artifacts.values():
+        await session.refresh(artifact)
 
     # 2. Embed the textbook (sync call — runs in thread via asyncio)
-    import asyncio
     metadata = {
         "chapter_id": chapter_id,
         "source_file": source_file,
@@ -231,18 +238,24 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
         None, process_textbook_upload, file_url, metadata
     )
 
-    # 3. Generate and store summary
-    summary = await asyncio.get_event_loop().run_in_executor(
-        None, generate_chapter_summary, chapter_id, medium_name
+    # 3. Generate all 3 artifacts in parallel
+    summary, one_mark, important_qs = await asyncio.gather(
+        asyncio.get_event_loop().run_in_executor(None, generate_chapter_summary, chapter_id, medium_name),
+        asyncio.get_event_loop().run_in_executor(None, generate_one_mark_questions, chapter_id, medium_name),
+        asyncio.get_event_loop().run_in_executor(None, generate_important_questions, chapter_id, medium_name),
     )
 
-    artifact.content = summary
-    artifact.status = "completed"
-    session.add(artifact)
+    artifacts["chapter_summary"].content = summary
+    artifacts["chapter_summary"].status = "completed"
+    artifacts["one_mark_questions"].content = one_mark
+    artifacts["one_mark_questions"].status = "completed"
+    artifacts["important_questions"].content = important_qs
+    artifacts["important_questions"].status = "completed"
+    for artifact in artifacts.values():
+        session.add(artifact)
     await session.commit()
 
     # 4. Generate topics and save to DB
-    from loguru import logger
     topics_raw = await asyncio.get_event_loop().run_in_executor(
         None, generate_topics, chapter_id, medium_name
     )
@@ -387,7 +400,7 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
 
     job.result = {
         "documents_processed": doc_count,
-        "artifact_id": artifact.id,
+        "artifact_ids": {atype: a.id for atype, a in artifacts.items()},
         "chapter_id": chapter_id,
         "topics_count": len(saved_topics),
         "activity_groups_count": len(saved_topics),
@@ -471,18 +484,19 @@ async def run_activity_job(job_id: int):
                 try:
                     chapter_id = (job.payload or {}).get("chapter_id")
                     if chapter_id:
-                        art_result = await session.exec(
-                            select(ChapterArtifact).where(
-                                ChapterArtifact.chapter_id == chapter_id,
-                                ChapterArtifact.artifact_type == "chapter_summary",
-                                ChapterArtifact.status == "processing",
+                        for atype in ["chapter_summary", "one_mark_questions", "important_questions"]:
+                            art_result = await session.exec(
+                                select(ChapterArtifact).where(
+                                    ChapterArtifact.chapter_id == chapter_id,
+                                    ChapterArtifact.artifact_type == atype,
+                                    ChapterArtifact.status == "processing",
+                                )
                             )
-                        )
-                        artifact = art_result.first()
-                        if artifact:
-                            artifact.status = "failed"
-                            artifact.error = str(e)
-                            session.add(artifact)
+                            artifact = art_result.first()
+                            if artifact:
+                                artifact.status = "failed"
+                                artifact.error = str(e)
+                                session.add(artifact)
                 except Exception:
                     pass
 

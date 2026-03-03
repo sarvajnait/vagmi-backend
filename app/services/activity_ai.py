@@ -156,8 +156,8 @@ def _generate_topics_from_text(
         "Analyze the provided chapter text and extract a comprehensive yet concise list of key topics "
         "that represent the entire scope of the content.\n\n"
         "Requirements:\n"
-        "- Optimized Topic Count: Extract between 6 to 15 topics depending on the chapter's length and complexity. "
-        "Avoid over-segmentation — if two concepts are closely related, group them under a single broader heading.\n"
+        "- Optimized Topic Count: Extract between 10 to 15 topics depending on the chapter's length and complexity. "
+        "Prefer more topics over fewer — only merge if two topics are nearly identical.\n"
         "- Complete Coverage: Ensure that every concept, definition, and principle mentioned "
         "in the chapter is mapped to one of the topics. No part of the chapter should be left out.\n"
         "- Conceptual Pillars: Each topic name must be a significant 'Conceptual Pillar' rather than a minor detail.\n"
@@ -190,8 +190,8 @@ def _consolidate_topics(
         "Given the topic candidates below extracted from different parts of a chapter, "
         "deduplicate and consolidate them into the final comprehensive topic list.\n\n"
         "Requirements:\n"
-        "- Optimized Topic Count: Return between 6 to 15 topics depending on the chapter's breadth. "
-        "Avoid over-segmentation — merge closely related subtopics under a single broader heading.\n"
+        "- Optimized Topic Count: Return between 10 to 15 topics depending on the chapter's breadth. "
+        "Prefer more topics over fewer — only merge if two topics are nearly identical.\n"
         "- Complete Coverage: Preserve all distinct concepts — do not drop topics that represent unique content.\n"
         "- Conceptual Pillars: Each topic name must be a significant 'Conceptual Pillar' rather than a minor detail.\n"
         "- Deduplication: Merge topics that refer to the same concept into one well-named topic.\n"
@@ -410,22 +410,132 @@ def generate_chapter_summary(chapter_id: int, medium_name: str = "") -> str:
         language_instruction = f"\nIMPORTANT: This is {lang_name} medium. Write the entire summary in {lang_name} language."
 
     human_prompt = (
-        "Based on the chapter text below, write a comprehensive chapter summary.\n\n"
-        "Structure:\n"
-        "1. **What this chapter is about** — 2-3 sentences overview\n"
-        "2. **Key Topics** — bullet list of main topics covered\n"
-        "3. **Important Concepts & Definitions** — key terms defined briefly\n"
-        "4. **Key Takeaways** — 3-5 most important points a student must remember\n\n"
-        "Write in clear, student-friendly language. Use markdown formatting."
+        "Task: Analyze the provided TEXTBOOK_TEXT and generate a structured summary covering 100% of the topics, sub-topics, and core concepts.\n\n"
+        "Structural Requirements:\n\n"
+        "**The \"Big Picture\" (60 Seconds):** A 3-bullet point bird's-eye view of why this chapter matters and its primary objective.\n\n"
+        "**Topic-Wise Deep Dive (8-10 Minutes):** Organize the content into the 6-15 \"Conceptual Pillars\" identified from the text. For each pillar:\n"
+        "- **Core Logic:** A 2-sentence explanation of the \"How/Why.\"\n"
+        "- **Keywords & Definitions:** Bold all technical terms that carry marks in board exams.\n"
+        "- **The \"Must-Know\" Fact:** One high-probability data point or principle.\n\n"
+        "**Visual & Logic Aids (3 Minutes):**\n"
+        "- **Comparison Tables:** If the text compares two things (e.g., Mitosis vs. Meiosis), create a Markdown table.\n"
+        "- **Formula/Equation Box:** List all mathematical or chemical shorthand.\n"
+        "- **Mnemonic Trigger:** Provide one acronym or memory trick for complex lists.\n\n"
+        "**The \"Examiner's Warning\" (1 Minute):** List 3 common mistakes students make in this specific chapter (e.g., swapping units, confusing similar terms).\n\n"
+        "Formatting & Tone:\n"
+        "- Use Strict Markdown (Headings, Bolding, Bullet points).\n"
+        "- Tone should be Urgent, Clear, and Encouraging.\n"
+        "- Avoid fluff: If a sentence doesn't help a student answer a question, delete it.\n"
         f"{language_instruction}\n\n"
         f"MEDIUM: {medium_name}\n\n"
-        f"CHAPTER TEXT:\n{text}"
+        f"TEXTBOOK_TEXT:\n{text}"
     )
 
     llm = _get_llm()
     response = llm.invoke(
         [
-            SystemMessage(content="You are an expert Curriculum Designer. Generate a clear, structured chapter summary for students."),
+            SystemMessage(content="You are an elite Academic Content Architect. Your goal is to transform a full chapter into a High-Density Revision Guide designed for a student to master the entire chapter in 10–15 minutes."),
+            HumanMessage(content=human_prompt),
+        ]
+    )
+    return response.content.strip()
+
+
+def generate_one_mark_questions(chapter_id: int, medium_name: str = "") -> str:
+    chapter_text = get_full_chapter_text(chapter_id)
+    if not chapter_text:
+        return ""
+
+    text = chapter_text[:MAX_SUMMARY_CHARS]
+
+    language_instruction = ""
+    medium_lower = medium_name.lower()
+    if any(
+        lang in medium_lower
+        for lang in [
+            "hindi", "kannada", "malayalam", "tamil", "telugu",
+            "sanskrit", "urdu", "bengali", "marathi", "gujarati",
+        ]
+    ):
+        lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
+        language_instruction = f"\nIMPORTANT: This is {lang_name} medium. Write all questions and answers in {lang_name} language."
+
+    human_prompt = (
+        "Task: Act as a Board Exam Paper Setter. Scan the provided TEXTBOOK_TEXT and extract every possible "
+        "1-mark question and answer to create an exhaustive objective question bank.\n\n"
+        "Extraction Typology — generate questions in all four formats:\n\n"
+        "1. **Factual Recall (VSA):** Direct questions requiring a one-word or one-sentence answer (e.g., 'Define Power Sharing').\n\n"
+        "2. **Assertion & Reason:** Create a statement (Assertion) and a logical explanation (Reason). "
+        "Students must decide if R explains A.\n\n"
+        "3. **Identify the Correct/Incorrect Pair:** Extract lists or classifications from the text and create "
+        "'Match the following' or 'Pick the odd one out' style 1-mark items.\n\n"
+        "4. **Term Spotting:** Provide a definition or a function and ask for the specific scientific or technical term.\n\n"
+        "Strict Requirements:\n"
+        "- **Granularity:** If a paragraph contains three distinct facts (e.g., a date, a name, and a location), create three separate 1-mark questions.\n"
+        "- **Accuracy:** Answers must be verbatim from the textbook to ensure they match the official marking scheme.\n"
+        "- **No Duplication:** If a fact is covered in one question type, do not repeat it unless the context changes.\n"
+        "- **Coverage Check:** Ensure that even the 'Small Print' (box content, captions of diagrams, and footnotes) is converted into 1-mark questions.\n"
+        "- Use Strict Markdown formatting. Bold technical terms.\n"
+        f"{language_instruction}\n\n"
+        f"MEDIUM: {medium_name}\n\n"
+        f"TEXTBOOK_TEXT:\n{text}"
+    )
+
+    llm = _get_llm()
+    response = llm.invoke(
+        [
+            SystemMessage(content="You are a Senior Board Examiner and Curriculum Expert specializing in 1-mark question banks."),
+            HumanMessage(content=human_prompt),
+        ]
+    )
+    return response.content.strip()
+
+
+def generate_important_questions(chapter_id: int, medium_name: str = "") -> str:
+    chapter_text = get_full_chapter_text(chapter_id)
+    if not chapter_text:
+        return ""
+
+    text = chapter_text[:MAX_SUMMARY_CHARS]
+
+    language_instruction = ""
+    medium_lower = medium_name.lower()
+    if any(
+        lang in medium_lower
+        for lang in [
+            "hindi", "kannada", "malayalam", "tamil", "telugu",
+            "sanskrit", "urdu", "bengali", "marathi", "gujarati",
+        ]
+    ):
+        lang_name = medium_name.replace(" medium", "").replace("Medium", "").strip()
+        language_instruction = f"\nIMPORTANT: This is {lang_name} medium. Write all questions and answers in {lang_name} language."
+
+    human_prompt = (
+        "Task: Analyze the TEXTBOOK_TEXT and extract all potential descriptive questions that could appear in an exam, "
+        "categorized by their marking weightage (2, 3, and 5 marks).\n\n"
+        "**2-Mark Questions (Short Answer):** Focus on 'Distinguish between,' 'Give two reasons,' or 'Define and give an example.' "
+        "Provide exactly 2-3 concise bullet points for the answer.\n\n"
+        "**3-Mark Questions (Analytical):** Focus on 'Explain the process of,' 'Why is [X] important,' or 'Describe the features of.' "
+        "Provide 3-4 detailed bullet points with technical keywords.\n\n"
+        "**5-Mark Questions (Long/Comprehensive):** Focus on the major themes of the chapter. Provide a structured response:\n"
+        "- **Heading:** Clear title for the answer.\n"
+        "- **Intro:** A 1-line opening.\n"
+        "- **Body:** 5-6 comprehensive bullet points covering the 'How, Why, and What.'\n"
+        "- **Conclusion/Note:** A concluding line or mention of a mandatory diagram/formula.\n\n"
+        "Strict Constraints:\n"
+        "- **Bullet-Only Answers:** All answers must be in clean bullet points for high readability and last-minute memorization.\n"
+        "- **Keyword Emphasis:** Bold the most important technical terms in every bullet point.\n"
+        "- **Exhaustive Mapping:** Ensure every sub-topic long enough to form a descriptive question is included.\n"
+        "- **No Overlap:** If a concept is covered in a 5-mark question, do not create a separate 2-mark question for the same detail unless it's a specific sub-part.\n"
+        f"{language_instruction}\n\n"
+        f"MEDIUM: {medium_name}\n\n"
+        f"TEXTBOOK_TEXT:\n{text}"
+    )
+
+    llm = _get_llm()
+    response = llm.invoke(
+        [
+            SystemMessage(content="You are a Senior Board Examiner and Curriculum Expert specializing in descriptive question banks."),
             HumanMessage(content=human_prompt),
         ]
     )
