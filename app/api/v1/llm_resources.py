@@ -1365,3 +1365,63 @@ async def update_qa_pattern(
         logger.error(f"Error updating Q&A pattern: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+# ============================================================
+# Chapter Artifact Endpoints
+# ============================================================
+
+VALID_ARTIFACT_TYPES = {"chapter_summary", "one_mark_questions", "important_questions"}
+
+
+class ArtifactUpdate(BaseModel):
+    content: str
+
+
+@router.get("/artifacts")
+async def get_artifacts(
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get all artifacts for a chapter."""
+    try:
+        result = await session.exec(
+            select(ChapterArtifact).where(ChapterArtifact.chapter_id == chapter_id)
+        )
+        artifacts = result.all()
+        return {"data": [a.dict() for a in artifacts]}
+    except Exception as e:
+        logger.error(f"Error fetching artifacts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/artifacts/{artifact_type}")
+async def update_artifact(
+    artifact_type: str,
+    payload: ArtifactUpdate,
+    chapter_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update the content of an artifact."""
+    if artifact_type not in VALID_ARTIFACT_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid artifact_type: {artifact_type}")
+    try:
+        result = await session.exec(
+            select(ChapterArtifact).where(
+                ChapterArtifact.chapter_id == chapter_id,
+                ChapterArtifact.artifact_type == artifact_type,
+            )
+        )
+        artifact = result.first()
+        if not artifact:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        artifact.content = payload.content
+        session.add(artifact)
+        await session.commit()
+        await session.refresh(artifact)
+        return {"data": artifact.dict()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating artifact: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
