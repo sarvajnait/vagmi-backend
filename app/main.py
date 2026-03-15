@@ -23,6 +23,8 @@ async def _cleanup_stale_jobs():
     from sqlmodel import select
     from app.services.database import async_session_maker
     from app.models import ActivityGenerationJob, StudentTextbook, StudentNotes, ChapterArtifact
+    from app.models.comp_student_content import CompStudentTextbook, CompStudentNote
+    from app.models.comp_artifacts import CompChapterArtifact
 
     async with async_session_maker() as session:
         result = await session.exec(
@@ -68,6 +70,39 @@ async def _cleanup_stale_jobs():
                             artifact.status = "failed"
                             artifact.error = "Server restarted while processing"
                             session.add(artifact)
+
+                elif job.job_type == "comp_audio_generation":
+                    resource_type = (job.payload or {}).get("resource_type")
+                    resource_id = (job.payload or {}).get("resource_id")
+                    if resource_type == "textbook" and resource_id:
+                        record = await session.get(CompStudentTextbook, resource_id)
+                    elif resource_type == "notes" and resource_id:
+                        record = await session.get(CompStudentNote, resource_id)
+                    else:
+                        record = None
+                    if record and record.audio_status == "processing":
+                        record.audio_status = "failed"
+                        session.add(record)
+
+                elif job.job_type == "comp_textbook_process":
+                    comp_chapter_id = (job.payload or {}).get("comp_chapter_id")
+                    sub_chapter_id = (job.payload or {}).get("sub_chapter_id")
+                    filter_col = CompChapterArtifact.comp_chapter_id if comp_chapter_id else CompChapterArtifact.sub_chapter_id
+                    filter_val = comp_chapter_id or sub_chapter_id
+                    if filter_val:
+                        art_result = await session.exec(
+                            select(CompChapterArtifact).where(
+                                filter_col == filter_val,
+                                CompChapterArtifact.artifact_type == "chapter_summary",
+                                CompChapterArtifact.status == "processing",
+                            )
+                        )
+                        artifact = art_result.first()
+                        if artifact:
+                            artifact.status = "failed"
+                            artifact.error = "Server restarted while processing"
+                            session.add(artifact)
+
             except Exception as e:
                 logger.warning(f"Could not reset resource for stale job {job.id}: {e}")
 

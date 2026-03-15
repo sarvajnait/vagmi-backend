@@ -9,3 +9,9 @@ from .activities import *
 from .activity_jobs import *
 from .chapter_artifacts import *
 from .notifications import Notification
+from .competitive_hierarchy import *
+from .comp_llm_resources import *
+from .comp_student_content import *
+from .comp_activities import *
+from .comp_artifacts import *
+from .mock_tests import *

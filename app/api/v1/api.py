@@ -23,6 +23,11 @@ from app.api.v1.payments import router as payments_router
 from app.api.v1.activities import router as activities_router
 from app.api.v1.activity_groups import router as activity_groups_router
 from app.api.v1.topics import router as topics_router
+from app.api.v1.comp_hierarchy import router as comp_hierarchy_router
+from app.api.v1.comp_llm_resources import router as comp_llm_resources_router
+from app.api.v1.comp_student_content import router as comp_student_content_router
+from app.api.v1.comp_activities import router as comp_activities_router
+from app.api.v1.mock_tests import router as mock_tests_router
 
 api_router = APIRouter()
 
@@ -58,6 +63,11 @@ api_router.include_router(topics_router, prefix="/topics", tags=["topics"])
 api_router.include_router(admin_router, prefix="/admin/auth", tags=["admin"])
 api_router.include_router(admin_users_router, prefix="/admin/users", tags=["admin"])
 api_router.include_router(admin_notifications_router, prefix="/admin/notifications", tags=["admin"])
+api_router.include_router(comp_hierarchy_router, prefix="/comp", tags=["competitive-hierarchy"])
+api_router.include_router(comp_llm_resources_router, prefix="/comp/llm", tags=["competitive-llm"])
+api_router.include_router(comp_student_content_router, prefix="/comp/student", tags=["competitive-student"])
+api_router.include_router(comp_activities_router, prefix="/comp", tags=["competitive-activities"])
+api_router.include_router(mock_tests_router, prefix="/comp", tags=["mock-tests"])
 
 
 @api_router.get("/health")
