@@ -92,7 +92,7 @@ def get_full_chapter_text(chapter_id: int, collection_name: str = BOARD_TEXTBOOK
         fallback_store = PGVector(
             connection=_settings.POSTGRES_URL,
             collection_name=collection_name,
-            embeddings=GoogleGenerativeAIEmbeddings(model="models/text-embedding-004"),
+            embeddings=GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", output_dimensionality=768),
         )
         docs = fallback_store.similarity_search(
             query="",

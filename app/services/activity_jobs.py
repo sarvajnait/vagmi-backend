@@ -672,7 +672,7 @@ def _async_embed_comp(file_url: str, source_file: str, chapter_id: int, textbook
         comp_store = PGVector(
             connection=settings.POSTGRES_URL,
             collection_name=COMP_TEXTBOOK_COLLECTION,
-            embeddings=GoogleGenerativeAIEmbeddings(model="models/text-embedding-004"),
+            embeddings=GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", output_dimensionality=768),
         )
         loader = PyPDFLoader(file_url)
         pages = loader.load()
