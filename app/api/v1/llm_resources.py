@@ -214,24 +214,27 @@ async def get_textbooks(
         _result = await session.exec(query)
         textbooks = _result.all()
 
-        # Fetch artifact status per unique chapter so the frontend can show
-        # processing badges without needing a separate API call.
-        chapter_ids = list({t.chapter_id for t in textbooks})
-        artifact_status: dict[int, str] = {}
-        if chapter_ids:
-            art_result = await session.exec(
-                select(ChapterArtifact).where(
-                    ChapterArtifact.chapter_id.in_(chapter_ids),
-                    ChapterArtifact.artifact_type == "chapter_summary",
+        # Fetch per-textbook job status (pending/processing/failed only)
+        textbook_ids_set = {t.id for t in textbooks}
+        tb_job_status: dict[int, str] = {}
+        if textbook_ids_set:
+            job_result = await session.exec(
+                select(ActivityGenerationJob)
+                .where(
+                    ActivityGenerationJob.job_type == "textbook_process",
+                    ActivityGenerationJob.status.in_(["pending", "processing", "failed"]),
                 )
+                .order_by(ActivityGenerationJob.id.desc())
             )
-            for art in art_result.all():
-                artifact_status[art.chapter_id] = art.status
+            for job in job_result.all():
+                tb_id = (job.payload or {}).get("textbook_id")
+                if tb_id in textbook_ids_set and tb_id not in tb_job_status:
+                    tb_job_status[tb_id] = job.status
 
         data = []
         for t in textbooks:
             row = t.dict()
-            row["artifact_status"] = artifact_status.get(t.chapter_id)
+            row["artifact_status"] = tb_job_status.get(t.id)
             data.append(row)
 
         return {"data": data}

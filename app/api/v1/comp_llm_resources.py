@@ -130,24 +130,27 @@ async def get_comp_textbooks(
         _result = await session.exec(query)
         textbooks = _result.all()
 
-        # Fetch artifact status
-        chapter_id_val = comp_chapter_id or sub_chapter_id
-        artifact_status = None
-        if chapter_id_val:
-            filter_col = CompChapterArtifact.comp_chapter_id if comp_chapter_id else CompChapterArtifact.sub_chapter_id
-            art_result = await session.exec(
-                select(CompChapterArtifact).where(
-                    filter_col == chapter_id_val,
-                    CompChapterArtifact.artifact_type == "chapter_summary",
+        # Fetch per-textbook job status (pending/processing/failed only)
+        textbook_ids_set = {t.id for t in textbooks}
+        tb_job_status: dict[int, str] = {}
+        if textbook_ids_set:
+            job_result = await session.exec(
+                select(ActivityGenerationJob)
+                .where(
+                    ActivityGenerationJob.job_type == "comp_textbook_process",
+                    ActivityGenerationJob.status.in_(["pending", "processing", "failed"]),
                 )
+                .order_by(ActivityGenerationJob.id.desc())
             )
-            art = art_result.first()
-            artifact_status = art.status if art else None
+            for job in job_result.all():
+                tb_id = (job.payload or {}).get("textbook_id")
+                if tb_id in textbook_ids_set and tb_id not in tb_job_status:
+                    tb_job_status[tb_id] = job.status
 
         data = []
         for t in textbooks:
             row = t.dict()
-            row["artifact_status"] = artifact_status
+            row["artifact_status"] = tb_job_status.get(t.id)
             data.append(row)
         return {"data": data}
     except Exception as e:
