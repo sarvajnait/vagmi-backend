@@ -1,19 +1,13 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import case, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.competitive_hierarchy import (
-    ExamCategory, ExamCategoryCreate, ExamCategoryRead,
-    Exam, ExamCreate, ExamRead,
-    CompExamMedium, CompExamMediumCreate, CompExamMediumRead,
-    Level, LevelCreate, LevelRead,
-    CompSubject, CompSubjectCreate, CompSubjectRead,
-    CompChapter, CompChapterCreate, CompChapterUpdate, CompChapterRead,
-    SubChapter, SubChapterCreate, SubChapterUpdate, SubChapterRead,
+    ExamCategory, ExamCategoryCreate, Exam, ExamCreate, CompExamMedium, CompExamMediumCreate, Level, LevelCreate, CompSubject, CompSubjectCreate, CompChapter, CompChapterCreate, CompChapterUpdate, SubChapter, SubChapterCreate, SubChapterUpdate,
 )
 from app.services.database import get_session
 

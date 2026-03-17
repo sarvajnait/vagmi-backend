@@ -1,10 +1,10 @@
 from typing import Optional, TYPE_CHECKING
 from sqlalchemy import Column, Integer, ForeignKey
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field
 from app.models.base import BaseModel
 
 if TYPE_CHECKING:
-    from app.models.competitive_hierarchy import Level
+    pass
 
 
 # --------------------

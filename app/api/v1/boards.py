@@ -144,4 +144,4 @@ async def update_board(
         await session.rollback()
         logger.error(f"Error updating board: {e}")
         raise HTTPException(status_code=400, detail=str(e))
-    
+

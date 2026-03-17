@@ -463,7 +463,6 @@ async def _run_comp_textbook_process_job(job: ActivityGenerationJob, session):
     Comp version of textbook processing: embed + generate artifacts using comp collections.
     Writes artifacts to comp_chapter_artifacts table.
     """
-    from loguru import logger
 
     comp_chapter_id = job.payload.get("comp_chapter_id")
     sub_chapter_id = job.payload.get("sub_chapter_id")

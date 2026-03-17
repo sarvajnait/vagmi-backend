@@ -9,7 +9,6 @@ from app.models import (
     LLMImage,
     LLMNote,
     QAPattern,
-    AdditionalNotes,
     StudentTextbook,
     StudentNotes,
     StudentVideo,

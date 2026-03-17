@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile, HTTPException, Form, Query
 from pydantic import BaseModel
 from loguru import logger
@@ -6,11 +6,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from sqlalchemy import func, case
 from app.models.comp_llm_resources import (
-    CompLLMTextbook, CompLLMTextbookCreate, CompLLMTextbookRead,
-    CompLLMNote, CompLLMNoteCreate, CompLLMNoteRead,
-    CompAdditionalNote, CompAdditionalNoteCreate, CompAdditionalNoteRead,
-    CompQAPattern, CompQAPatternCreate, CompQAPatternRead,
-    CompLLMImage, CompLLMImageCreate, CompLLMImageRead,
+    CompLLMTextbook, CompLLMNote, CompAdditionalNote, CompQAPattern, CompLLMImage,
 )
 from app.models.comp_artifacts import CompChapterArtifact
 from app.models import ActivityGenerationJob
@@ -18,7 +14,6 @@ from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do
 from app.utils.cleanup import delete_embeddings_by_resource_id
 from app.utils.files import compress_image
-import uuid
 
 router = APIRouter()
 

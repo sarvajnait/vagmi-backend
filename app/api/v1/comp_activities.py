@@ -8,9 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import ActivityGenerationJob
 from app.models.comp_activities import (
-    CompActivityGroup, CompActivityGroupCreate, CompActivityGroupRead,
-    CompChapterActivity, CompChapterActivityCreate, CompChapterActivityRead,
-    CompTopic, CompTopicCreate, CompTopicRead,
+    CompActivityGroup, CompActivityGroupCreate, CompChapterActivity, CompTopic,
 )
 from app.services.activity_jobs import enqueue_activity_job
 from app.services.database import get_session

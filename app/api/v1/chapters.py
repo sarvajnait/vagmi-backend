@@ -191,7 +191,7 @@ async def delete_chapter(chapter_id: int, session: AsyncSession = Depends(get_se
 
         # Clean up all related resources (files and embeddings) before deleting the chapter
         cleanup_stats = await cleanup_chapter_resources(session, chapter_id)
-        
+
         # Delete the chapter (cascade_delete relationships will handle related DB records)
         await session.delete(chapter)
         await session.commit()

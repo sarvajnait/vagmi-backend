@@ -6,10 +6,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from sqlalchemy import func, case
 from app.models.comp_student_content import (
-    CompStudentTextbook, CompStudentTextbookCreate, CompStudentTextbookRead,
-    CompStudentNote, CompStudentNoteCreate, CompStudentNoteRead,
-    CompStudentVideo, CompStudentVideoCreate, CompStudentVideoRead,
-    CompPreviousYearPaper, CompPreviousYearPaperCreate, CompPreviousYearPaperRead, CompPreviousYearPaperUpdate,
+    CompStudentTextbook, CompStudentNote, CompStudentVideo, CompPreviousYearPaper,
 )
 from app.models import ActivityGenerationJob
 from app.services.database import get_session

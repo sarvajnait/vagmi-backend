@@ -2,7 +2,6 @@
 Kannada Text Converter Utility
 Converts legacy ASCII-encoded Kannada text to proper Unicode
 """
-import os
 from pathlib import Path
 from py_mini_racer import py_mini_racer
 from loguru import logger

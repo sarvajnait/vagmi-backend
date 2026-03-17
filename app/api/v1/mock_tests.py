@@ -7,8 +7,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.mock_tests import (
-    MockTest, MockTestCreate, MockTestUpdate, MockTestRead,
-    MockTestQuestion, MockTestQuestionCreate, MockTestQuestionUpdate, MockTestQuestionRead,
+    MockTest, MockTestCreate, MockTestUpdate, MockTestQuestion, MockTestQuestionCreate, MockTestQuestionUpdate,
 )
 from app.models.competitive_hierarchy import Level
 from app.services.database import get_session

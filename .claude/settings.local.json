@@ -46,7 +46,11 @@
       "Bash(\"/c/Users/LENOVO/AppData/Local/Programs/Python/Python311/Scripts/ruff.exe\" check d:/projects/vagmi-backend/app/services/razorpay_service.py d:/projects/vagmi-backend/app/api/v1/payments.py d:/projects/vagmi-backend/app/models/subscriptions.py)",
       "Bash(\"/c/Users/LENOVO/AppData/Local/Programs/Python/Python311/python.exe\":*)",
       "Bash(\"/c/Users/LENOVO/AppData/Local/Programs/Python/Python311/Scripts/ruff.exe\" check d:/projects/vagmi-backend/app/services/activity_jobs.py)",
-      "Bash(\"/c/Users/LENOVO/AppData/Local/Programs/Python/Python311/Scripts/ruff.exe\" check d:/projects/vagmi-backend/app/services/activity_jobs.py d:/projects/vagmi-backend/app/services/activity_ai.py)"
+      "Bash(\"/c/Users/LENOVO/AppData/Local/Programs/Python/Python311/Scripts/ruff.exe\" check d:/projects/vagmi-backend/app/services/activity_jobs.py d:/projects/vagmi-backend/app/services/activity_ai.py)",
+      "Bash(for f:*)",
+      "Bash(do)",
+      "Read(//d/projects/vagmi-backend/**)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []
