@@ -323,23 +323,30 @@ def generate_activities(
 
     human_prompt = (
         f"Generate exactly {mcq_count} MCQ questions and exactly {descriptive_count} descriptive questions "
-        f"for EACH of the following topics, based on the chapter text below.\n\n"
-        "Core Constraints:\n"
-        "- Generate questions for EVERY topic listed — do not skip any.\n"
-        f"- For each topic: exactly {mcq_count} MCQs and exactly {descriptive_count} descriptive questions.\n"
-        "- MCQ: provide 4 plausible options, correct_answer must be the EXACT text of one option.\n"
-        "- MCQ: include answer_description (1-2 sentence explanation of why the correct answer is right).\n"
+        f"for EACH of the following topics.\n\n"
+        "Objective: Ensure 100% information coverage. Every fact, definition, and important question "
+        "from both the TEXTBOOK_CONTENT and the QA_DOCUMENT must be converted into a question. "
+        "No detail should be left untested.\n\n"
+        "MCQ Typology — distribute across all four types for comprehensive testing:\n"
+        "1. Direct Concept: Tests factual knowledge, definitions, or laws directly from the text.\n"
+        "2. Situational/Application: A real-world scenario where the concept must be applied to find the solution.\n"
+        "3. Assertion & Reason: Two statements (A and R) where the relationship between the fact and its logic must be verified.\n"
+        "4. Negative Selection: Questions that ask 'Which of the following is NOT correct?' to test boundary knowledge.\n\n"
+        "Strict Requirements:\n"
+        "- Source Hierarchy: If a question exists in the QA_DOCUMENT, it must be prioritized and adapted as the first set of MCQs.\n"
+        f"- For each topic: exactly {mcq_count} MCQs and exactly {descriptive_count} descriptive questions — do not skip any topic.\n"
+        "- MCQ: provide 4 options, correct_answer must be the EXACT text of one option.\n"
+        "- Distractor Quality: Options B, C, and D must be plausible 'trap' answers based on common misconceptions related to the topic.\n"
+        "- Verifiable Explanations: Every answer_description must include a brief explanation based on the provided source material.\n"
         "- Descriptive: include a full model answer_text.\n"
-        "- Cognitive Depth: distribute across Bloom's Taxonomy (Recall, Understanding, Application).\n"
         f"{language_instruction}\n\n"
         f"MEDIUM: {medium_name}\n\n"
         f"TOPICS:\n{topics_str}\n\n"
         + (
-            f"IMPORTANT Q&A (Previous Year / Must-Study):\n"
-            f"Incorporate these high-priority questions first where relevant.\n{qa_context}\n\n"
+            f"QA_DOCUMENT (Previous Year / Must-Study — prioritize these first):\n{qa_context}\n\n"
             if qa_context else ""
         )
-        + f"CHAPTER TEXT:\n{chapter_text}"
+        + f"TEXTBOOK_CONTENT:\n{chapter_text}"
     )
 
     logger.info(f"[chapter={chapter_id}] Calling LLM with structured output (prompt_len={len(human_prompt)})")
@@ -347,7 +354,11 @@ def generate_activities(
     try:
         result: _ActivityOutput = llm.invoke(
             [
-                SystemMessage(content="You are an expert Pedagogy & Assessment Design AI."),
+                SystemMessage(content=(
+                    "Act as a Senior Assessment Designer and Subject Matter Expert. "
+                    "Your output must strictly follow the requested JSON schema — "
+                    "no markdown, no prose, no commentary outside the JSON."
+                )),
                 HumanMessage(content=human_prompt),
             ]
         )
