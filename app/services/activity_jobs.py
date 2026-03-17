@@ -9,7 +9,11 @@ from app.models.activities import ActivityGroup
 from app.models.comp_activities import CompTopic, CompActivityGroup, CompChapterActivity
 from app.models.comp_artifacts import CompChapterArtifact
 from app.models.comp_student_content import CompStudentTextbook, CompStudentNote
-from app.services.activity_ai import generate_activities, generate_topics, normalize_activity, generate_chapter_summary, generate_one_mark_questions, generate_important_questions
+from app.services.activity_ai import (
+    generate_activities, generate_topics, normalize_activity,
+    generate_chapter_summary, generate_one_mark_questions, generate_important_questions,
+    COMP_TEXTBOOK_COLLECTION, COMP_QA_COLLECTION,
+)
 from app.services.database import async_session_maker
 
 
@@ -516,11 +520,11 @@ async def _run_comp_textbook_process_job(job: ActivityGenerationJob, session):
         None, _async_embed_comp, file_url, source_file, metadata_chapter_id, textbook_id
     )
 
-    # 3. Generate all 3 artifacts in parallel
+    # 3. Generate all 3 artifacts in parallel (using comp collection)
     summary, one_mark, important_qs = await asyncio.gather(
-        asyncio.get_event_loop().run_in_executor(None, generate_chapter_summary, metadata_chapter_id, medium_name),
-        asyncio.get_event_loop().run_in_executor(None, generate_one_mark_questions, metadata_chapter_id, medium_name),
-        asyncio.get_event_loop().run_in_executor(None, generate_important_questions, metadata_chapter_id, medium_name),
+        asyncio.get_event_loop().run_in_executor(None, generate_chapter_summary, metadata_chapter_id, medium_name, COMP_TEXTBOOK_COLLECTION),
+        asyncio.get_event_loop().run_in_executor(None, generate_one_mark_questions, metadata_chapter_id, medium_name, COMP_TEXTBOOK_COLLECTION),
+        asyncio.get_event_loop().run_in_executor(None, generate_important_questions, metadata_chapter_id, medium_name, COMP_TEXTBOOK_COLLECTION),
     )
 
     artifacts["chapter_summary"].content = summary
@@ -533,8 +537,8 @@ async def _run_comp_textbook_process_job(job: ActivityGenerationJob, session):
         session.add(artifact)
     await session.commit()
 
-    # 4. Generate topics
-    topics_raw = await asyncio.get_event_loop().run_in_executor(None, generate_topics, metadata_chapter_id, medium_name)
+    # 4. Generate topics (using comp collection)
+    topics_raw = await asyncio.get_event_loop().run_in_executor(None, generate_topics, metadata_chapter_id, medium_name, COMP_TEXTBOOK_COLLECTION)
     cleaned_topics = _clean_topics(topics_raw)
 
     if not cleaned_topics:
@@ -593,10 +597,10 @@ async def _run_comp_textbook_process_job(job: ActivityGenerationJob, session):
         next_group_order += 1
         topic_groups.append((topic, activity_group))
 
-    # 6. Generate activities
+    # 6. Generate activities (using comp collections)
     all_topic_titles = [topic.title for topic, _ in topic_groups]
     raw_activities = await asyncio.get_event_loop().run_in_executor(
-        None, generate_activities, metadata_chapter_id, all_topic_titles, MCQ_COUNT, DESCRIPTIVE_COUNT, medium_name
+        None, generate_activities, metadata_chapter_id, all_topic_titles, MCQ_COUNT, DESCRIPTIVE_COUNT, medium_name, COMP_TEXTBOOK_COLLECTION, COMP_QA_COLLECTION
     )
 
     title_to_group = {topic.title.strip().lower(): (topic, group) for topic, group in topic_groups}
@@ -653,16 +657,22 @@ async def _run_comp_textbook_process_job(job: ActivityGenerationJob, session):
 
 
 def _async_embed_comp(file_url: str, source_file: str, chapter_id: int, textbook_id: int) -> int:
-    """Sync wrapper for comp textbook embedding into comp collection."""
+    """Sync wrapper for comp textbook embedding into comp_llm_textbooks collection."""
     from langchain_community.document_loaders import PyPDFLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_postgres import PGVector
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
     from app.utils.kannada_converter import convert_kannada_text
-    from app.core.agents.graph import EducationPlatform
+    from app.core.config import settings
     import uuid as _uuid
     from loguru import logger
 
     try:
-        platform = EducationPlatform()
+        comp_store = PGVector(
+            connection=settings.POSTGRES_URL,
+            collection_name=COMP_TEXTBOOK_COLLECTION,
+            embeddings=GoogleGenerativeAIEmbeddings(model="models/text-embedding-004"),
+        )
         loader = PyPDFLoader(file_url)
         pages = loader.load()
         for page in pages:
@@ -683,10 +693,11 @@ def _async_embed_comp(file_url: str, source_file: str, chapter_id: int, textbook
                 "content_type": "textbook",
                 "chunk_index": idx,
             })
-        platform.vector_store_textbooks.add_documents(
+        comp_store.add_documents(
             documents,
             ids=[str(_uuid.uuid4()) for _ in documents],
         )
+        logger.info(f"Comp embed: {len(documents)} chunks → {COMP_TEXTBOOK_COLLECTION!r} (chapter_id={chapter_id})")
         return len(documents)
     except Exception as e:
         logger.error(f"Comp embed error: {e}")
@@ -700,7 +711,7 @@ async def _run_comp_topics_job(job: ActivityGenerationJob, session):
 
     medium_name = await _get_comp_medium_name(comp_chapter_id, session)
 
-    topics = generate_topics(chapter_id, medium_name)
+    topics = generate_topics(chapter_id, medium_name, COMP_TEXTBOOK_COLLECTION)
     if not topics:
         raise ValueError("No chapter content found")
     job.result = {"topics": _clean_topics(topics)}
@@ -713,7 +724,7 @@ async def _run_comp_topics_save_job(job: ActivityGenerationJob, session):
 
     medium_name = await _get_comp_medium_name(comp_chapter_id, session)
 
-    topics = generate_topics(chapter_id, medium_name)
+    topics = generate_topics(chapter_id, medium_name, COMP_TEXTBOOK_COLLECTION)
     if not topics:
         raise ValueError("No chapter content found")
 
@@ -776,7 +787,7 @@ async def _run_comp_activities_job(job: ActivityGenerationJob, session):
         await session.flush()
         activity_group_id = activity_group.id
 
-    raw = generate_activities(chapter_id, topic_titles, mcq_count, descriptive_count, medium_name)
+    raw = generate_activities(chapter_id, topic_titles, mcq_count, descriptive_count, medium_name, COMP_TEXTBOOK_COLLECTION, COMP_QA_COLLECTION)
     normalized = [normalize_activity(item) for item in raw if normalize_activity(item)]
     normalized = normalized[:mcq_count + descriptive_count]
 

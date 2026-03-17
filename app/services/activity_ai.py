@@ -11,6 +11,10 @@ from pydantic import BaseModel, conlist
 
 from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks
 
+BOARD_TEXTBOOK_COLLECTION = "llm_textbooks"
+BOARD_QA_COLLECTION = "qa_patterns"
+COMP_TEXTBOOK_COLLECTION = "comp_llm_textbooks"
+COMP_QA_COLLECTION = "comp_qa_patterns"
 
 MAX_TOPIC_CHARS = 12000
 MAX_ACTIVITY_CHUNK_CHARS = 12000
@@ -48,11 +52,11 @@ def _split_text(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
 # Context fetchers
 # --------------------
 
-def get_full_chapter_text(chapter_id: int) -> str:
+def get_full_chapter_text(chapter_id: int, collection_name: str = BOARD_TEXTBOOK_COLLECTION) -> str:
     from app.core.config import settings
     import psycopg
 
-    logger.debug(f"[chapter={chapter_id}] Fetching full chapter text from DB")
+    logger.debug(f"[chapter={chapter_id}] Fetching full chapter text from DB (collection={collection_name!r})")
     try:
         postgres_url = settings.POSTGRES_URL.replace("postgresql+psycopg://", "postgresql://")
 
@@ -63,17 +67,17 @@ def get_full_chapter_text(chapter_id: int) -> str:
                     SELECT document, cmetadata
                     FROM langchain_pg_embedding
                     WHERE collection_id = (
-                        SELECT uuid FROM langchain_pg_collection WHERE name = 'llm_textbooks'
+                        SELECT uuid FROM langchain_pg_collection WHERE name = %s
                     )
                     AND cmetadata->>'chapter_id' = %s
                     ORDER BY (cmetadata->>'chunk_index')::int NULLS LAST
                     """,
-                    (str(chapter_id),),
+                    (collection_name, str(chapter_id)),
                 )
                 rows = cur.fetchall()
 
                 if not rows:
-                    logger.warning(f"[chapter={chapter_id}] No embeddings found in llm_textbooks — chapter has no uploaded content")
+                    logger.warning(f"[chapter={chapter_id}] No embeddings found in {collection_name!r} — chapter has no uploaded content")
                     return ""
 
                 raw_chunks = [row[0] for row in rows]
@@ -96,7 +100,7 @@ def get_full_chapter_text(chapter_id: int) -> str:
 
 
 
-def get_qa_context(chapter_id: int) -> str:
+def get_qa_context(chapter_id: int, collection_name: str = BOARD_QA_COLLECTION) -> str:
     """Fetch all Q&A pattern content for a chapter directly from the DB."""
     from app.core.config import settings
     import psycopg
@@ -110,12 +114,12 @@ def get_qa_context(chapter_id: int) -> str:
                     SELECT document
                     FROM langchain_pg_embedding
                     WHERE collection_id = (
-                        SELECT uuid FROM langchain_pg_collection WHERE name = 'qa_patterns'
+                        SELECT uuid FROM langchain_pg_collection WHERE name = %s
                     )
                     AND cmetadata->>'chapter_id' = %s
                     ORDER BY (cmetadata->>'chunk_index')::int NULLS LAST
                     """,
-                    (str(chapter_id),),
+                    (collection_name, str(chapter_id)),
                 )
                 rows = cur.fetchall()
                 if not rows:
@@ -215,9 +219,9 @@ def _consolidate_topics(
     return topics if isinstance(topics, list) else []
 
 
-def generate_topics(chapter_id: int, medium_name: str = "") -> List[Dict[str, str]]:
-    logger.info(f"[chapter={chapter_id}] Starting topic generation (medium={medium_name!r})")
-    chapter_text = get_full_chapter_text(chapter_id)
+def generate_topics(chapter_id: int, medium_name: str = "", collection_name: str = BOARD_TEXTBOOK_COLLECTION) -> List[Dict[str, str]]:
+    logger.info(f"[chapter={chapter_id}] Starting topic generation (medium={medium_name!r}, collection={collection_name!r})")
+    chapter_text = get_full_chapter_text(chapter_id, collection_name)
     if not chapter_text:
         logger.warning(f"[chapter={chapter_id}] No chapter text — skipping topic generation")
         return []
@@ -288,6 +292,8 @@ def generate_activities(
     mcq_count: int,
     descriptive_count: int,
     medium_name: str = "",
+    collection_name: str = BOARD_TEXTBOOK_COLLECTION,
+    qa_collection_name: str = BOARD_QA_COLLECTION,
 ) -> List[Dict[str, Any]]:
     """
     Generate activities for all topic titles in a single structured LLM call.
@@ -295,15 +301,15 @@ def generate_activities(
     """
     logger.info(
         f"[chapter={chapter_id}] generate_activities: topics={topic_titles}, "
-        f"mcq={mcq_count}, descriptive={descriptive_count}, medium={medium_name!r}"
+        f"mcq={mcq_count}, descriptive={descriptive_count}, medium={medium_name!r}, collection={collection_name!r}"
     )
-    chapter_text = get_full_chapter_text(chapter_id)
+    chapter_text = get_full_chapter_text(chapter_id, collection_name)
     if not chapter_text:
         logger.warning(f"[chapter={chapter_id}] Empty chapter text — cannot generate activities")
         return []
     logger.info(f"[chapter={chapter_id}] Chapter text length={len(chapter_text)}")
 
-    qa_context = get_qa_context(chapter_id)
+    qa_context = get_qa_context(chapter_id, qa_collection_name)
     topics_str = "\n".join(f"- {t}" for t in topic_titles)
 
     language_instruction = ""
@@ -396,13 +402,13 @@ def generate_activities(
 MAX_SUMMARY_CHARS = 20000
 
 
-def generate_chapter_summary(chapter_id: int, medium_name: str = "") -> str:
+def generate_chapter_summary(chapter_id: int, medium_name: str = "", collection_name: str = BOARD_TEXTBOOK_COLLECTION) -> str:
     """
     Generate a structured chapter summary from the full chapter text.
     Returns a markdown-formatted summary string.
     Called once during textbook processing and stored as a ChapterArtifact.
     """
-    chapter_text = get_full_chapter_text(chapter_id)
+    chapter_text = get_full_chapter_text(chapter_id, collection_name)
     if not chapter_text:
         return ""
 
@@ -452,8 +458,8 @@ def generate_chapter_summary(chapter_id: int, medium_name: str = "") -> str:
     return response.content.strip()
 
 
-def generate_one_mark_questions(chapter_id: int, medium_name: str = "") -> str:
-    chapter_text = get_full_chapter_text(chapter_id)
+def generate_one_mark_questions(chapter_id: int, medium_name: str = "", collection_name: str = BOARD_TEXTBOOK_COLLECTION) -> str:
+    chapter_text = get_full_chapter_text(chapter_id, collection_name)
     if not chapter_text:
         return ""
 
@@ -502,8 +508,8 @@ def generate_one_mark_questions(chapter_id: int, medium_name: str = "") -> str:
     return response.content.strip()
 
 
-def generate_important_questions(chapter_id: int, medium_name: str = "") -> str:
-    chapter_text = get_full_chapter_text(chapter_id)
+def generate_important_questions(chapter_id: int, medium_name: str = "", collection_name: str = BOARD_TEXTBOOK_COLLECTION) -> str:
+    chapter_text = get_full_chapter_text(chapter_id, collection_name)
     if not chapter_text:
         return ""
 
