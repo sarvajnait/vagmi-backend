@@ -12,6 +12,7 @@ from app.models.comp_student_content import CompStudentTextbook, CompStudentNote
 from app.services.activity_ai import (
     generate_activities, generate_topics, normalize_activity,
     generate_chapter_summary, generate_one_mark_questions, generate_important_questions,
+    BOARD_TEXTBOOK_COLLECTION, BOARD_QA_COLLECTION,
     COMP_TEXTBOOK_COLLECTION, COMP_QA_COLLECTION,
 )
 from app.services.database import async_session_maker
@@ -39,7 +40,7 @@ async def _run_topics_job(job: ActivityGenerationJob, session):
     medium = await session.get(Medium, subject.medium_id) if subject else None
     medium_name = medium.name if medium else ""
 
-    topics = generate_topics(chapter_id, medium_name)
+    topics = generate_topics(chapter_id, medium_name, BOARD_TEXTBOOK_COLLECTION)
     if not topics:
         raise ValueError("No chapter content found")
 
@@ -58,7 +59,7 @@ async def _run_topics_save_job(job: ActivityGenerationJob, session):
     medium = await session.get(Medium, subject.medium_id) if subject else None
     medium_name = medium.name if medium else ""
 
-    topics = generate_topics(chapter_id, medium_name)
+    topics = generate_topics(chapter_id, medium_name, BOARD_TEXTBOOK_COLLECTION)
     if not topics:
         raise ValueError("No chapter content found")
 
@@ -135,7 +136,7 @@ async def _run_activities_job(job: ActivityGenerationJob, session):
         await session.flush()
         activity_group_id = activity_group.id
 
-    raw = generate_activities(chapter_id, topic_titles, mcq_count, descriptive_count, medium_name)
+    raw = generate_activities(chapter_id, topic_titles, mcq_count, descriptive_count, medium_name, BOARD_TEXTBOOK_COLLECTION, BOARD_QA_COLLECTION)
     normalized = []
     for item in raw:
         normalized_item = normalize_activity(item)
@@ -247,9 +248,9 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
 
     # 3. Generate all 3 artifacts in parallel
     summary, one_mark, important_qs = await asyncio.gather(
-        asyncio.get_event_loop().run_in_executor(None, generate_chapter_summary, chapter_id, medium_name),
-        asyncio.get_event_loop().run_in_executor(None, generate_one_mark_questions, chapter_id, medium_name),
-        asyncio.get_event_loop().run_in_executor(None, generate_important_questions, chapter_id, medium_name),
+        asyncio.get_event_loop().run_in_executor(None, generate_chapter_summary, chapter_id, medium_name, BOARD_TEXTBOOK_COLLECTION),
+        asyncio.get_event_loop().run_in_executor(None, generate_one_mark_questions, chapter_id, medium_name, BOARD_TEXTBOOK_COLLECTION),
+        asyncio.get_event_loop().run_in_executor(None, generate_important_questions, chapter_id, medium_name, BOARD_TEXTBOOK_COLLECTION),
     )
 
     artifacts["chapter_summary"].content = summary
@@ -264,7 +265,7 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
 
     # 4. Generate topics and save to DB
     topics_raw = await asyncio.get_event_loop().run_in_executor(
-        None, generate_topics, chapter_id, medium_name
+        None, generate_topics, chapter_id, medium_name, BOARD_TEXTBOOK_COLLECTION
     )
     cleaned_topics = _clean_topics(topics_raw)
 
@@ -341,6 +342,8 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
         MCQ_COUNT,
         DESCRIPTIVE_COUNT,
         medium_name,
+        BOARD_TEXTBOOK_COLLECTION,
+        BOARD_QA_COLLECTION,
     )
     logger.info(f"[chapter={chapter_id}] Total raw tagged activities: {len(raw_activities)}")
 
@@ -460,7 +463,6 @@ async def _run_comp_textbook_process_job(job: ActivityGenerationJob, session):
     Comp version of textbook processing: embed + generate artifacts using comp collections.
     Writes artifacts to comp_chapter_artifacts table.
     """
-    from app.api.v1.comp_llm_resources import COMP_COLLECTION_TEXTBOOKS
     from loguru import logger
 
     comp_chapter_id = job.payload.get("comp_chapter_id")

@@ -9,7 +9,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from loguru import logger
 from pydantic import BaseModel, conlist
 
-from app.core.agents.graph import merge_chunks_remove_overlap, vector_store_textbooks
+from app.core.agents.graph import merge_chunks_remove_overlap
 
 BOARD_TEXTBOOK_COLLECTION = "llm_textbooks"
 BOARD_QA_COLLECTION = "qa_patterns"
@@ -85,14 +85,22 @@ def get_full_chapter_text(chapter_id: int, collection_name: str = BOARD_TEXTBOOK
                 logger.debug(f"[chapter={chapter_id}] Fetched {len(rows)} chunks, merged text length={len(text)}")
                 return text
     except Exception as e:
-        logger.error(f"[chapter={chapter_id}] Error fetching chapter text from DB: {e} — falling back to similarity search")
-        docs = vector_store_textbooks.similarity_search(
+        logger.error(f"[chapter={chapter_id}] Error fetching chapter text from DB: {e} — falling back to similarity search on {collection_name!r}")
+        from app.core.config import settings as _settings
+        from langchain_postgres import PGVector
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        fallback_store = PGVector(
+            connection=_settings.POSTGRES_URL,
+            collection_name=collection_name,
+            embeddings=GoogleGenerativeAIEmbeddings(model="models/text-embedding-004"),
+        )
+        docs = fallback_store.similarity_search(
             query="",
             k=1000,
             filter={"chapter_id": str(chapter_id)},
         )
         if not docs:
-            logger.warning(f"[chapter={chapter_id}] Fallback similarity search also returned no docs")
+            logger.warning(f"[chapter={chapter_id}] Fallback similarity search on {collection_name!r} also returned no docs")
             return ""
         docs.sort(key=lambda d: d.metadata.get("chunk_index", 0))
         raw_chunks = [d.page_content for d in docs]
