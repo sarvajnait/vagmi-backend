@@ -417,6 +417,16 @@ async def get_comp_topics(
     return {"data": [t.dict() for t in result.all()]}
 
 
+@router.delete("/topics/{topic_id}")
+async def delete_comp_topic(topic_id: int, session: AsyncSession = Depends(get_session)):
+    topic = await session.get(CompTopic, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    await session.delete(topic)
+    await session.commit()
+    return {"data": {"deleted": True}}
+
+
 @router.post("/topics/ai/generate")
 async def ai_generate_comp_topics(
     payload: CompTopicsRequest,
