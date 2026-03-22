@@ -582,8 +582,8 @@ async def _run_comp_textbook_process_job(job: ActivityGenerationJob, session):
         max_group_order = max_group_order[0]
     next_group_order = (max_group_order or 0) + 1
 
-    MCQ_COUNT = 7
-    DESCRIPTIVE_COUNT = 3
+    MCQ_COUNT = 10
+    DESCRIPTIVE_COUNT = 0
 
     topic_groups = []
     for topic in saved_topics:

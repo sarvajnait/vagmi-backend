@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
@@ -6,10 +7,15 @@ from sqlalchemy import case, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.api.v1.auth import get_current_user
+from app.api.v1.admin.auth import get_current_user as get_current_admin
 from app.models import ActivityGenerationJob
 from app.models.comp_activities import (
     CompActivityGroup, CompActivityGroupCreate, CompChapterActivity, CompTopic,
+    CompActivityPlaySession, CompActivityAnswer,
 )
+from app.models.user import User
+from app.models.admin import Admin
 from app.services.activity_jobs import enqueue_activity_job
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do
@@ -417,6 +423,22 @@ async def get_comp_topics(
     return {"data": [t.dict() for t in result.all()]}
 
 
+class CompTopicCreate(BaseModel):
+    title: str
+    comp_chapter_id: Optional[int] = None
+    sub_chapter_id: Optional[int] = None
+
+
+@router.post("/topics")
+async def create_comp_topic(payload: CompTopicCreate, session: AsyncSession = Depends(get_session)):
+    comp_chapter_id, sub_chapter_id = _resolve_fk(payload.comp_chapter_id, payload.sub_chapter_id)
+    topic = CompTopic(title=payload.title.strip(), comp_chapter_id=comp_chapter_id, sub_chapter_id=sub_chapter_id)
+    session.add(topic)
+    await session.commit()
+    await session.refresh(topic)
+    return {"data": topic.dict()}
+
+
 @router.delete("/topics/{topic_id}")
 async def delete_comp_topic(topic_id: int, session: AsyncSession = Depends(get_session)):
     topic = await session.get(CompTopic, topic_id)
@@ -501,3 +523,256 @@ async def get_comp_ai_job(job_id: int, session: AsyncSession = Depends(get_sessi
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"data": job.dict()}
+
+
+# ============================================================
+# Publish
+# ============================================================
+
+@router.post("/activities/publish")
+async def publish_comp_activities(
+    payload: PublishRequest,
+    _: Admin = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    if not payload.ids:
+        raise HTTPException(status_code=400, detail="No ids provided")
+    _result = await session.exec(
+        select(CompChapterActivity).where(CompChapterActivity.id.in_(payload.ids))
+    )
+    activities = _result.all()
+    if len(activities) != len(payload.ids):
+        raise HTTPException(status_code=400, detail="Invalid activity ids")
+    for activity in activities:
+        activity.is_published = payload.is_published
+        session.add(activity)
+    await session.commit()
+    return {"message": "Activities updated"}
+
+
+# ============================================================
+# Progress & Sessions (user-facing)
+# ============================================================
+
+class CompSessionCreate(BaseModel):
+    comp_chapter_id: Optional[int] = None
+    sub_chapter_id: Optional[int] = None
+
+
+class CompAnswerSubmit(BaseModel):
+    activity_id: int
+    selected_option_index: Optional[int] = None
+
+
+@router.get("/progress")
+async def get_comp_activity_progress(
+    comp_chapter_id: Optional[int] = Query(None),
+    sub_chapter_id: Optional[int] = Query(None),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    filter_col = CompChapterActivity.comp_chapter_id if comp_chapter_id else CompChapterActivity.sub_chapter_id
+    filter_val = comp_chapter_id or sub_chapter_id
+    _result = await session.exec(
+        select(CompChapterActivity)
+        .where(filter_col == filter_val, CompChapterActivity.is_published == True)
+        .order_by(*sort_ordering(CompChapterActivity))
+    )
+    activities = _result.all()
+    if not activities:
+        return {"data": []}
+
+    activity_ids = [a.id for a in activities]
+    answered_result = await session.exec(
+        select(CompActivityAnswer.activity_id)
+        .join(CompActivityPlaySession)
+        .where(
+            CompActivityPlaySession.user_id == current_user.id,
+            CompActivityAnswer.activity_id.in_(activity_ids),
+        )
+        .distinct()
+    )
+    answered_ids = {row[0] if isinstance(row, tuple) else row for row in answered_result.all()}
+    return {"data": [{**a.dict(), "completed": a.id in answered_ids} for a in activities]}
+
+
+@router.post("/sessions")
+async def create_comp_session(
+    payload: CompSessionCreate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    comp_chapter_id, sub_chapter_id = _resolve_fk(payload.comp_chapter_id, payload.sub_chapter_id)
+    filter_col = CompChapterActivity.comp_chapter_id if comp_chapter_id else CompChapterActivity.sub_chapter_id
+    filter_val = comp_chapter_id or sub_chapter_id
+
+    _count_result = await session.exec(
+        select(func.count()).where(filter_col == filter_val, CompChapterActivity.is_published == True)
+    )
+    total_questions = _count_result.first()
+    if isinstance(total_questions, tuple):
+        total_questions = total_questions[0]
+    if total_questions == 0:
+        raise HTTPException(status_code=404, detail="No activities found")
+
+    play_session = CompActivityPlaySession(
+        user_id=current_user.id,
+        comp_chapter_id=comp_chapter_id,
+        sub_chapter_id=sub_chapter_id,
+        total_questions=total_questions,
+    )
+    session.add(play_session)
+    await session.commit()
+    await session.refresh(play_session)
+
+    _result = await session.exec(
+        select(CompChapterActivity)
+        .where(filter_col == filter_val, CompChapterActivity.is_published == True)
+        .order_by(*sort_ordering(CompChapterActivity))
+        .limit(1)
+    )
+    first_activity = _result.first()
+    return {"data": {"session": play_session.dict(), "next_activity": first_activity.dict() if first_activity else None}}
+
+
+@router.post("/sessions/{session_id}/answers")
+async def submit_comp_answer(
+    session_id: int,
+    payload: CompAnswerSubmit,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    play_session = await session.get(CompActivityPlaySession, session_id)
+    if not play_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if play_session.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if play_session.status == "completed":
+        raise HTTPException(status_code=400, detail="Session already completed")
+
+    activity = await session.get(CompChapterActivity, payload.activity_id)
+    if not activity or (activity.comp_chapter_id != play_session.comp_chapter_id and activity.sub_chapter_id != play_session.sub_chapter_id):
+        raise HTTPException(status_code=404, detail="Activity not found for this session")
+    if not activity.is_published:
+        raise HTTPException(status_code=400, detail="Activity not published")
+
+    _existing = await session.exec(
+        select(CompActivityAnswer).where(
+            CompActivityAnswer.session_id == session_id,
+            CompActivityAnswer.activity_id == payload.activity_id,
+        )
+    )
+    if _existing.first():
+        raise HTTPException(status_code=400, detail="Answer already submitted")
+
+    if payload.selected_option_index not in {1, 2, 3, 4}:
+        raise HTTPException(status_code=400, detail="selected_option_index must be 1-4")
+
+    is_correct = payload.selected_option_index == activity.correct_option_index
+    score = 1 if is_correct else 0
+
+    answer = CompActivityAnswer(
+        session_id=session_id,
+        activity_id=payload.activity_id,
+        selected_option_index=payload.selected_option_index,
+        is_correct=is_correct,
+        score=score,
+    )
+    session.add(answer)
+    play_session.correct_count += 1 if is_correct else 0
+    play_session.score += score
+    session.add(play_session)
+    await session.commit()
+    await session.refresh(play_session)
+
+    _answered_count = await session.exec(
+        select(func.count(CompActivityAnswer.id)).where(CompActivityAnswer.session_id == session_id)
+    )
+    answered_count = _answered_count.first()
+    if isinstance(answered_count, tuple):
+        answered_count = answered_count[0]
+
+    completed = answered_count >= play_session.total_questions
+    if completed:
+        play_session.status = "completed"
+        play_session.completed_at = datetime.now(UTC)
+        session.add(play_session)
+        await session.commit()
+        await session.refresh(play_session)
+
+    _answered_ids = await session.exec(
+        select(CompActivityAnswer.activity_id).where(CompActivityAnswer.session_id == session_id)
+    )
+    answered_ids = [row[0] if isinstance(row, tuple) else row for row in _answered_ids.all()]
+
+    filter_col = CompChapterActivity.comp_chapter_id if play_session.comp_chapter_id else CompChapterActivity.sub_chapter_id
+    filter_val = play_session.comp_chapter_id or play_session.sub_chapter_id
+    next_query = select(CompChapterActivity).where(filter_col == filter_val, CompChapterActivity.is_published == True)
+    if answered_ids:
+        next_query = next_query.where(~CompChapterActivity.id.in_(answered_ids))
+    next_query = next_query.order_by(*sort_ordering(CompChapterActivity)).limit(1)
+    _next = await session.exec(next_query)
+    next_activity = _next.first()
+
+    correct_answer = {
+        "correct_option_index": activity.correct_option_index,
+        "correct_option_text": (
+            activity.options[activity.correct_option_index - 1]
+            if activity.options and activity.correct_option_index
+            else None
+        ),
+        "answer_description": activity.answer_description,
+    }
+
+    return {"data": {
+        "is_correct": is_correct,
+        "score": score,
+        "correct_answer": correct_answer,
+        "answer_image_url": activity.answer_image_url,
+        "next_activity": next_activity.dict() if next_activity else None,
+        "completed": completed,
+        "session": play_session.dict(),
+    }}
+
+
+@router.get("/sessions/{session_id}/report")
+async def get_comp_session_report(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    play_session = await session.get(CompActivityPlaySession, session_id)
+    if not play_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if play_session.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    _result = await session.exec(
+        select(CompActivityAnswer, CompChapterActivity)
+        .join(CompChapterActivity, CompChapterActivity.id == CompActivityAnswer.activity_id)
+        .where(CompActivityAnswer.session_id == session_id)
+        .order_by(*sort_ordering(CompChapterActivity))
+    )
+    answers = []
+    for answer, activity in _result.all():
+        answers.append({
+            "activity_id": activity.id,
+            "type": activity.type,
+            "question_text": activity.question_text,
+            "options": activity.options,
+            "answer_image_url": activity.answer_image_url,
+            "submitted": {"selected_option_index": answer.selected_option_index},
+            "correct": {
+                "correct_option_index": activity.correct_option_index,
+                "correct_option_text": (
+                    activity.options[activity.correct_option_index - 1]
+                    if activity.options and activity.correct_option_index
+                    else None
+                ),
+                "answer_description": activity.answer_description,
+            },
+            "is_correct": answer.is_correct,
+            "score": answer.score,
+        })
+
+    return {"data": {"session": play_session.dict(), "answers": answers}}

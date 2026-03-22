@@ -1,5 +1,6 @@
+from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import ARRAY, String, Column, Integer, ForeignKey
+from sqlalchemy import ARRAY, DateTime, String, Column, Integer, ForeignKey, UniqueConstraint, func
 from sqlmodel import Field, Relationship, SQLModel
 from app.models.base import BaseModel
 
@@ -97,3 +98,52 @@ class CompChapterActivityCreate(CompChapterActivityBase):
 
 class CompChapterActivityRead(CompChapterActivityBase):
     id: int
+
+
+class CompActivityPlaySession(BaseModel, table=True):
+    __tablename__ = "comp_activity_play_sessions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    )
+    comp_chapter_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("comp_chapters.id", ondelete="CASCADE"), nullable=True, index=True),
+    )
+    sub_chapter_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("comp_sub_chapters.id", ondelete="CASCADE"), nullable=True, index=True),
+    )
+    status: str = Field(default="in_progress", max_length=20)
+    total_questions: int = Field(default=0)
+    correct_count: int = Field(default=0)
+    score: int = Field(default=0)
+    started_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    completed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+
+class CompActivityAnswer(BaseModel, table=True):
+    __tablename__ = "comp_activity_answers"
+    __table_args__ = (UniqueConstraint("session_id", "activity_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("comp_activity_play_sessions.id", ondelete="CASCADE"), nullable=False)
+    )
+    activity_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("comp_chapter_activities.id", ondelete="CASCADE"), nullable=False)
+    )
+    selected_option_index: Optional[int] = None
+    is_correct: Optional[bool] = None
+    score: int = Field(default=0)
+    answered_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
