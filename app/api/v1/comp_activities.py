@@ -1,5 +1,9 @@
 from datetime import UTC, datetime
+from io import BytesIO
+import re
 from typing import Optional
+import xml.etree.ElementTree as ET
+import zipfile
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
@@ -19,6 +23,8 @@ from app.models.admin import Admin
 from app.services.activity_jobs import enqueue_activity_job
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do
+
+from openpyxl import load_workbook
 
 router = APIRouter()
 
@@ -64,6 +70,260 @@ def _resolve_fk(comp_chapter_id: Optional[int], sub_chapter_id: Optional[int]):
     if comp_chapter_id is None and sub_chapter_id is None:
         raise HTTPException(status_code=400, detail="Either comp_chapter_id or sub_chapter_id must be provided")
     return comp_chapter_id, sub_chapter_id
+
+
+_HEADER_ALIASES = {
+    "topic": "topic_name",
+    "topic_name": "topic_name",
+    "topicname": "topic_name",
+    "question": "question_text",
+    "question_text": "question_text",
+    "questiontext": "question_text",
+    "option_a": "option_a",
+    "option_a_text": "option_a",
+    "option1": "option_a",
+    "option_1": "option_a",
+    "a": "option_a",
+    "option_b": "option_b",
+    "option_b_text": "option_b",
+    "option2": "option_b",
+    "option_2": "option_b",
+    "b": "option_b",
+    "option_c": "option_c",
+    "option_c_text": "option_c",
+    "option3": "option_c",
+    "option_3": "option_c",
+    "c": "option_c",
+    "option_d": "option_d",
+    "option_d_text": "option_d",
+    "option4": "option_d",
+    "option_4": "option_d",
+    "d": "option_d",
+    "correct_option_index": "correct_option_index",
+    "correct_index": "correct_option_index",
+    "correct_option": "correct_option_index",
+    "correct_answer": "correct_option_index",
+    "correct_option_letter": "correct_option_letter",
+    "correct_letter": "correct_option_letter",
+    "answer_description": "answer_description",
+    "explanation": "answer_description",
+    "answer_explanation": "answer_description",
+    "is_published": "is_published",
+    "published": "is_published",
+}
+
+
+def _normalize_header(value: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+    return _HEADER_ALIASES.get(key, key)
+
+
+def _cell_str(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _parse_bool(value) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"true", "yes", "1", "y"}:
+        return True
+    if text in {"false", "no", "0", "n"}:
+        return False
+    return None
+
+
+def _parse_correct_index(value) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value if value in {1, 2, 3, 4} else None
+    text = str(value).strip().lower()
+    if text in {"a", "(a)"}:
+        return 1
+    if text in {"b", "(b)"}:
+        return 2
+    if text in {"c", "(c)"}:
+        return 3
+    if text in {"d", "(d)"}:
+        return 4
+    try:
+        num = int(float(text))
+        return num if num in {1, 2, 3, 4} else None
+    except Exception:
+        return None
+
+
+def _extract_docx_paragraphs(content: bytes) -> list[str]:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with zipfile.ZipFile(BytesIO(content), "r") as archive:
+        xml_data = archive.read("word/document.xml")
+    root = ET.fromstring(xml_data)
+    paragraphs = []
+    for para in root.findall(".//w:p", ns):
+        text = "".join(node.text or "" for node in para.findall(".//w:t", ns)).strip()
+        if text:
+            paragraphs.append(text)
+    return paragraphs
+
+
+def _parse_option_line(option_line: str, expected_letters: tuple[str, str]) -> dict[str, str]:
+    first, second = expected_letters
+    first_match = re.search(rf"\({first}\)\s*", option_line, flags=re.IGNORECASE)
+    second_match = re.search(rf"\({second}\)\s*", option_line, flags=re.IGNORECASE)
+    if not first_match or not second_match or second_match.start() <= first_match.end():
+        return {}
+    return {
+        f"option_{first}": option_line[first_match.end():second_match.start()].strip(),
+        f"option_{second}": option_line[second_match.end():].strip(),
+    }
+
+
+def _parse_docx_rows(content: bytes) -> list[dict]:
+    paragraphs = _extract_docx_paragraphs(content)
+    topic_re = re.compile(r"^TOPIC\s+\d+\s*:\s*(.+)$", re.IGNORECASE)
+    number_re = re.compile(r"^\d+$")
+    answer_re = re.compile(r"^\(([a-d])\)$", re.IGNORECASE)
+    terminal_markers = {
+        "SELF-ASSESSMENT SCORE TRACKER",
+        "FINAL REVISION STRATEGY",
+        "HOW TO REVISE THIS MCQ BANK IN 7 DAYS",
+    }
+
+    rows: list[dict] = []
+    i = 0
+    while i < len(paragraphs):
+        topic_match = topic_re.match(paragraphs[i])
+        if not topic_match:
+            i += 1
+            continue
+
+        topic_name = topic_match.group(1).strip()
+        i += 1
+
+        while i < len(paragraphs) and paragraphs[i] != "Questions":
+            if topic_re.match(paragraphs[i]):
+                break
+            i += 1
+        if i >= len(paragraphs) or topic_re.match(paragraphs[i]):
+            continue
+
+        i += 3
+        question_map: dict[int, dict] = {}
+
+        while i < len(paragraphs) and paragraphs[i] != "Answer Key with Explanations":
+            if topic_re.match(paragraphs[i]):
+                break
+            if not number_re.match(paragraphs[i]):
+                i += 1
+                continue
+
+            qno = int(paragraphs[i])
+            if i + 3 >= len(paragraphs):
+                raise ValueError(f"Incomplete question block for topic '{topic_name}' question {qno}")
+
+            question_text = paragraphs[i + 1].strip()
+            options = {}
+            options.update(_parse_option_line(paragraphs[i + 2], ("a", "b")))
+            options.update(_parse_option_line(paragraphs[i + 3], ("c", "d")))
+
+            if len(options) != 4:
+                raise ValueError(f"Could not parse 4 options for topic '{topic_name}' question {qno}")
+
+            question_map[qno] = {
+                "topic_name": topic_name,
+                "question_text": question_text,
+                "option_a": options.get("option_a", ""),
+                "option_b": options.get("option_b", ""),
+                "option_c": options.get("option_c", ""),
+                "option_d": options.get("option_d", ""),
+                "source_row": f"{topic_name} Q{qno}",
+            }
+            i += 4
+
+        if i >= len(paragraphs) or paragraphs[i] != "Answer Key with Explanations":
+            raise ValueError(f"Answer key not found for topic '{topic_name}'")
+
+        i += 3
+        while i < len(paragraphs):
+            if paragraphs[i] in terminal_markers:
+                break
+            if topic_re.match(paragraphs[i]):
+                break
+            if not number_re.match(paragraphs[i]):
+                i += 1
+                continue
+
+            qno = int(paragraphs[i])
+            if i + 2 >= len(paragraphs):
+                raise ValueError(f"Incomplete answer block for topic '{topic_name}' question {qno}")
+            answer_match = answer_re.match(paragraphs[i + 1].strip())
+            if not answer_match:
+                raise ValueError(f"Invalid answer format for topic '{topic_name}' question {qno}")
+            explanation = paragraphs[i + 2].strip()
+            if qno not in question_map:
+                raise ValueError(f"Answer exists without question for topic '{topic_name}' question {qno}")
+            question_map[qno]["correct_option_index"] = _parse_correct_index(answer_match.group(1))
+            question_map[qno]["answer_description"] = explanation
+            i += 3
+
+        rows.extend(question_map[qno] for qno in sorted(question_map))
+
+    if not rows:
+        raise ValueError("No MCQ content could be parsed from the DOCX file")
+    return rows
+
+
+def _parse_xlsx_rows(content: bytes) -> list[dict]:
+    wb = load_workbook(filename=BytesIO(content), data_only=True)
+    ws = wb.active
+
+    headers = {}
+    header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+    if not header_row:
+        raise ValueError("Empty Excel file")
+    for idx, raw in enumerate(header_row):
+        if raw is None:
+            continue
+        headers[_normalize_header(raw)] = idx
+
+    required = {"question_text", "option_a", "option_b", "option_c", "option_d"}
+    missing = [header for header in required if header not in headers]
+    if missing:
+        raise ValueError(f"Missing required columns: {', '.join(missing)}")
+
+    rows = []
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        if row is None or all((cell is None or str(cell).strip() == "") for cell in row):
+            continue
+        rows.append({
+            "topic_name": _cell_str(row[headers["topic_name"]]) if "topic_name" in headers else "",
+            "question_text": _cell_str(row[headers["question_text"]]) if "question_text" in headers else "",
+            "option_a": _cell_str(row[headers["option_a"]]) if "option_a" in headers else "",
+            "option_b": _cell_str(row[headers["option_b"]]) if "option_b" in headers else "",
+            "option_c": _cell_str(row[headers["option_c"]]) if "option_c" in headers else "",
+            "option_d": _cell_str(row[headers["option_d"]]) if "option_d" in headers else "",
+            "correct_option_index": (
+                _parse_correct_index(row[headers["correct_option_index"]])
+                if "correct_option_index" in headers
+                else None
+            ),
+            "correct_option_letter": (
+                _parse_correct_index(row[headers["correct_option_letter"]])
+                if "correct_option_letter" in headers
+                else None
+            ),
+            "answer_description": _cell_str(row[headers["answer_description"]]) if "answer_description" in headers else "",
+            "is_published": _parse_bool(row[headers["is_published"]]) if "is_published" in headers else None,
+            "source_row": row_idx,
+        })
+    return rows
 
 
 # ============================================================
@@ -378,6 +638,172 @@ async def delete_comp_activity(activity_id: int, session: AsyncSession = Depends
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/activities/import")
+async def import_comp_activities(
+    file: UploadFile = File(...),
+    import_mode: str = Form("use_group"),
+    activity_group_id: Optional[int] = Form(None),
+    comp_chapter_id: Optional[int] = Form(None),
+    sub_chapter_id: Optional[int] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    filename = (file.filename or "").lower()
+    if not (filename.endswith(".xlsx") or filename.endswith(".docx")):
+        raise HTTPException(status_code=400, detail="Only .xlsx and .docx files are supported")
+
+    if import_mode not in {"use_group", "create_groups"}:
+        raise HTTPException(status_code=400, detail="Invalid import_mode")
+
+    group = None
+    if import_mode == "use_group":
+        if not activity_group_id:
+            raise HTTPException(status_code=400, detail="activity_group_id is required for use_group")
+        group = await session.get(CompActivityGroup, activity_group_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="Activity group not found")
+        if comp_chapter_id is None and sub_chapter_id is None:
+            comp_chapter_id = group.comp_chapter_id
+            sub_chapter_id = group.sub_chapter_id
+    else:
+        comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
+
+    try:
+        content = await file.read()
+        if filename.endswith(".xlsx"):
+            parsed_rows = _parse_xlsx_rows(content)
+        else:
+            parsed_rows = _parse_docx_rows(content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read import file: {e}")
+
+    created = 0
+    total_rows = len(parsed_rows)
+    errors = []
+    groups_created = set()
+    groups_used = set()
+    group_cache = {}
+    group_sort_cache = {}
+
+    async def _get_next_sort(gid: int) -> int:
+        if gid in group_sort_cache:
+            group_sort_cache[gid] += 1
+            return group_sort_cache[gid]
+        _result = await session.exec(
+            select(func.max(CompChapterActivity.sort_order)).where(CompChapterActivity.activity_group_id == gid)
+        )
+        max_order = _result.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        group_sort_cache[gid] = (max_order or 0) + 1
+        return group_sort_cache[gid]
+
+    async def _get_or_create_group(topic_name: str) -> CompActivityGroup:
+        key = topic_name.strip().lower()
+        if key in group_cache:
+            return group_cache[key]
+        filter_col = CompActivityGroup.comp_chapter_id if comp_chapter_id else CompActivityGroup.sub_chapter_id
+        filter_val = comp_chapter_id or sub_chapter_id
+        _result = await session.exec(
+            select(CompActivityGroup).where(
+                filter_col == filter_val,
+                func.lower(CompActivityGroup.name) == key,
+            )
+        )
+        existing = _result.first()
+        if existing:
+            group_cache[key] = existing
+            return existing
+        _max = await session.exec(select(func.max(CompActivityGroup.sort_order)).where(filter_col == filter_val))
+        max_order = _max.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        new_group = CompActivityGroup(
+            name=topic_name.strip(),
+            comp_chapter_id=comp_chapter_id,
+            sub_chapter_id=sub_chapter_id,
+            sort_order=(max_order or 0) + 1,
+        )
+        session.add(new_group)
+        await session.commit()
+        await session.refresh(new_group)
+        group_cache[key] = new_group
+        groups_created.add(new_group.id)
+        return new_group
+
+    for row in parsed_rows:
+        row_ref = row.get("source_row", "?")
+        try:
+            question_text = _cell_str(row.get("question_text"))
+            option_a = _cell_str(row.get("option_a"))
+            option_b = _cell_str(row.get("option_b"))
+            option_c = _cell_str(row.get("option_c"))
+            option_d = _cell_str(row.get("option_d"))
+            answer_description = _cell_str(row.get("answer_description"))
+            topic_name = _cell_str(row.get("topic_name"))
+            correct_index = row.get("correct_option_index")
+            if correct_index is None:
+                correct_index = row.get("correct_option_letter")
+
+            if not question_text:
+                raise ValueError("question_text is required")
+            options = [option_a, option_b, option_c, option_d]
+            if any(not opt for opt in options):
+                raise ValueError("All 4 options are required")
+            if correct_index not in {1, 2, 3, 4}:
+                raise ValueError("correct_option_index must be 1-4 or a/b/c/d")
+
+            if import_mode == "create_groups":
+                if not topic_name:
+                    raise ValueError("topic_name is required when creating groups")
+                target_group = await _get_or_create_group(topic_name)
+            else:
+                target_group = group
+
+            if target_group.comp_chapter_id and comp_chapter_id and target_group.comp_chapter_id != comp_chapter_id:
+                raise ValueError("Activity group does not belong to the selected chapter")
+            if target_group.sub_chapter_id and sub_chapter_id and target_group.sub_chapter_id != sub_chapter_id:
+                raise ValueError("Activity group does not belong to the selected sub-chapter")
+
+            is_published = row.get("is_published")
+            sort_order = await _get_next_sort(target_group.id)
+
+            activity = CompChapterActivity(
+                activity_group_id=target_group.id,
+                comp_chapter_id=comp_chapter_id or target_group.comp_chapter_id,
+                sub_chapter_id=sub_chapter_id or target_group.sub_chapter_id,
+                type="mcq",
+                question_text=question_text,
+                options=options,
+                correct_option_index=int(correct_index),
+                answer_text=None,
+                answer_description=answer_description or None,
+                is_published=True if is_published is None else is_published,
+                sort_order=sort_order,
+            )
+            session.add(activity)
+            groups_used.add(target_group.id)
+            created += 1
+        except Exception as e:
+            errors.append({"row": row_ref, "error": str(e)})
+
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to import activities: {e}")
+
+    return {
+        "message": "Import completed",
+        "data": {
+            "total_rows": total_rows,
+            "created": created,
+            "errors": errors,
+            "groups_used": len(groups_used),
+            "groups_created": len(groups_created),
+        },
+    }
 
 
 @router.put("/activities/order")

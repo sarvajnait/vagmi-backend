@@ -2,7 +2,7 @@ import asyncio
 from typing import Any, Dict, List
 
 from sqlalchemy import func
-from sqlmodel import select
+from sqlmodel import delete, select
 
 from app.models import ActivityGenerationJob, Chapter, ChapterActivity, Topic, Medium, ChapterArtifact, StudentTextbook, StudentNotes
 from app.models.activities import ActivityGroup
@@ -65,24 +65,18 @@ async def _run_topics_save_job(job: ActivityGenerationJob, session):
 
     cleaned = _clean_topics(topics)
 
-    # Get max sort order for existing topics
-    result = await session.exec(
-        select(func.max(Topic.sort_order)).where(Topic.chapter_id == chapter_id)
-    )
-    max_order = result.first()
-    if isinstance(max_order, tuple):
-        max_order = max_order[0]
-    next_order = (max_order or 0) + 1
+    # Clear existing topics before inserting fresh ones
+    await session.exec(delete(Topic).where(Topic.chapter_id == chapter_id))
+    await session.flush()
 
     created_ids = []
-    for t in cleaned:
+    for idx, t in enumerate(cleaned):
         topic = Topic(
             title=t["title"],
             summary=t.get("summary"),
             chapter_id=chapter_id,
-            sort_order=next_order,
+            sort_order=idx + 1,
         )
-        next_order += 1
         session.add(topic)
         await session.flush()
         created_ids.append(topic.id)
@@ -263,158 +257,10 @@ async def _run_textbook_process_job(job: ActivityGenerationJob, session):
         session.add(artifact)
     await session.commit()
 
-    # 4. Generate topics and save to DB
-    topics_raw = await asyncio.get_event_loop().run_in_executor(
-        None, generate_topics, chapter_id, medium_name, BOARD_TEXTBOOK_COLLECTION
-    )
-    cleaned_topics = _clean_topics(topics_raw)
-
-    if not cleaned_topics:
-        logger.warning(f"No topics generated for chapter_id={chapter_id}, skipping activity generation")
-        job.result = {
-            "documents_processed": doc_count,
-            "artifact_id": artifact.id,
-            "chapter_id": chapter_id,
-            "topics_count": 0,
-            "activity_groups_count": 0,
-        }
-        return
-
-    # Get next sort_order for topics
-    topic_order_result = await session.exec(
-        select(func.max(Topic.sort_order)).where(Topic.chapter_id == chapter_id)
-    )
-    max_topic_order = topic_order_result.first()
-    if isinstance(max_topic_order, tuple):
-        max_topic_order = max_topic_order[0]
-    next_topic_order = (max_topic_order or 0) + 1
-
-    saved_topics = []
-    for t in cleaned_topics:
-        topic = Topic(
-            title=t["title"],
-            summary=t.get("summary"),
-            chapter_id=chapter_id,
-            sort_order=next_topic_order,
-        )
-        next_topic_order += 1
-        session.add(topic)
-        await session.flush()
-        saved_topics.append(topic)
-
-    logger.info(f"Saved {len(saved_topics)} topics for chapter_id={chapter_id}")
-
-    # 5. Create all ActivityGroups first (sequential — need flushed IDs before LLM calls)
-    group_order_result = await session.exec(
-        select(func.max(ActivityGroup.sort_order)).where(
-            ActivityGroup.chapter_id == chapter_id
-        )
-    )
-    max_group_order = group_order_result.first()
-    if isinstance(max_group_order, tuple):
-        max_group_order = max_group_order[0]
-    next_group_order = (max_group_order or 0) + 1
-
-    MCQ_COUNT = 7
-    DESCRIPTIVE_COUNT = 3
-
-    topic_groups: list[tuple[Topic, ActivityGroup]] = []
-    for topic in saved_topics:
-        activity_group = ActivityGroup(
-            name=topic.title[:255],
-            chapter_id=chapter_id,
-            sort_order=next_group_order,
-        )
-        session.add(activity_group)
-        await session.flush()
-        next_group_order += 1
-        topic_groups.append((topic, activity_group))
-
-    # 6. Generate all activities in one chunk-based call (tagged with topic field)
-    all_topic_titles = [topic.title for topic, _ in topic_groups]
-    logger.info(f"[chapter={chapter_id}] Starting chunk-based activity generation for {len(all_topic_titles)} topics")
-
-    raw_activities = await asyncio.get_event_loop().run_in_executor(
-        None,
-        generate_activities,
-        chapter_id,
-        all_topic_titles,
-        MCQ_COUNT,
-        DESCRIPTIVE_COUNT,
-        medium_name,
-        BOARD_TEXTBOOK_COLLECTION,
-        BOARD_QA_COLLECTION,
-    )
-    logger.info(f"[chapter={chapter_id}] Total raw tagged activities: {len(raw_activities)}")
-
-    # Build lookup: normalized topic title → (topic, activity_group)
-    title_to_group: dict[str, tuple[Topic, ActivityGroup]] = {
-        topic.title.strip().lower(): (topic, group)
-        for topic, group in topic_groups
-    }
-
-    # Distribute tagged activities into per-topic buckets (capped per topic)
-    group_id_to_bucket: dict[int, list] = {group.id: [] for _, group in topic_groups}
-    group_id_caps: dict[int, int] = {group.id: MCQ_COUNT + DESCRIPTIVE_COUNT for _, group in topic_groups}
-
-    for item in raw_activities:
-        raw_topic_tag = str(item.get("topic", "")).strip().lower()
-        match = title_to_group.get(raw_topic_tag)
-        if not match:
-            # Fuzzy fallback: pick the topic title that is a substring match
-            for key, val in title_to_group.items():
-                if raw_topic_tag in key or key in raw_topic_tag:
-                    match = val
-                    break
-        if not match:
-            logger.warning(f"[chapter={chapter_id}] Activity topic tag '{item.get('topic')}' matched no known topic — skipping")
-            continue
-        _, group = match
-        if len(group_id_to_bucket[group.id]) >= group_id_caps[group.id]:
-            continue  # cap reached for this topic
-        norm = normalize_activity(item)
-        if norm:
-            group_id_to_bucket[group.id].append(norm)
-        else:
-            logger.warning(f"[chapter={chapter_id}] normalize_activity rejected: {item}")
-
-    # Save all activities (sequential DB writes)
-    total_activities_created = 0
-    group_id_to_topic = {group.id: topic for topic, group in topic_groups}
-
-    for group_id, normalized in group_id_to_bucket.items():
-        topic = group_id_to_topic[group_id]
-        next_activity_order = 1
-        for item in normalized:
-            activity = ChapterActivity(
-                activity_group_id=group_id,
-                chapter_id=chapter_id,
-                type=item["type"],
-                question_text=item["question_text"],
-                options=item.get("options"),
-                correct_option_index=item.get("correct_option_index"),
-                answer_text=item.get("answer_text"),
-                answer_description=item.get("answer_description"),
-                answer_image_url=None,
-                is_published=True,
-                sort_order=next_activity_order,
-            )
-            next_activity_order += 1
-            session.add(activity)
-        await session.flush()
-        total_activities_created += len(normalized)
-        logger.info(
-            f"Created {len(normalized)} activities for topic '{topic.title}' "
-            f"(group_id={group_id})"
-        )
-
     job.result = {
         "documents_processed": doc_count,
         "artifact_ids": {atype: a.id for atype, a in artifacts.items()},
         "chapter_id": chapter_id,
-        "topics_count": len(saved_topics),
-        "activity_groups_count": len(saved_topics),
-        "activities_count": total_activities_created,
     }
 
 
@@ -538,122 +384,9 @@ async def _run_comp_textbook_process_job(job: ActivityGenerationJob, session):
         session.add(artifact)
     await session.commit()
 
-    # 4. Generate topics (using comp collection)
-    topics_raw = await asyncio.get_event_loop().run_in_executor(None, generate_topics, metadata_chapter_id, medium_name, COMP_TEXTBOOK_COLLECTION)
-    cleaned_topics = _clean_topics(topics_raw)
-
-    if not cleaned_topics:
-        job.result = {"documents_processed": doc_count, "topics_count": 0, "activity_groups_count": 0}
-        return
-
-    # Get next sort_order for topics
-    topic_order_result = await session.exec(
-        select(func.max(CompTopic.sort_order)).where(
-            CompTopic.comp_chapter_id == comp_chapter_id if comp_chapter_id else CompTopic.sub_chapter_id == sub_chapter_id
-        )
-    )
-    max_topic_order = topic_order_result.first()
-    if isinstance(max_topic_order, tuple):
-        max_topic_order = max_topic_order[0]
-    next_topic_order = (max_topic_order or 0) + 1
-
-    saved_topics = []
-    for t in cleaned_topics:
-        topic = CompTopic(
-            title=t["title"],
-            summary=t.get("summary"),
-            comp_chapter_id=comp_chapter_id,
-            sub_chapter_id=sub_chapter_id,
-            sort_order=next_topic_order,
-        )
-        next_topic_order += 1
-        session.add(topic)
-        await session.flush()
-        saved_topics.append(topic)
-
-    # 5. Create activity groups
-    group_order_result = await session.exec(
-        select(func.max(CompActivityGroup.sort_order)).where(
-            CompActivityGroup.comp_chapter_id == comp_chapter_id if comp_chapter_id else CompActivityGroup.sub_chapter_id == sub_chapter_id
-        )
-    )
-    max_group_order = group_order_result.first()
-    if isinstance(max_group_order, tuple):
-        max_group_order = max_group_order[0]
-    next_group_order = (max_group_order or 0) + 1
-
-    MCQ_COUNT = 10
-    DESCRIPTIVE_COUNT = 0
-
-    topic_groups = []
-    for topic in saved_topics:
-        activity_group = CompActivityGroup(
-            name=topic.title[:255],
-            comp_chapter_id=comp_chapter_id,
-            sub_chapter_id=sub_chapter_id,
-            sort_order=next_group_order,
-        )
-        session.add(activity_group)
-        await session.flush()
-        next_group_order += 1
-        topic_groups.append((topic, activity_group))
-
-    # 6. Generate activities (using comp collections)
-    all_topic_titles = [topic.title for topic, _ in topic_groups]
-    raw_activities = await asyncio.get_event_loop().run_in_executor(
-        None, generate_activities, metadata_chapter_id, all_topic_titles, MCQ_COUNT, DESCRIPTIVE_COUNT, medium_name, COMP_TEXTBOOK_COLLECTION, COMP_QA_COLLECTION
-    )
-
-    title_to_group = {topic.title.strip().lower(): (topic, group) for topic, group in topic_groups}
-    group_id_to_bucket = {group.id: [] for _, group in topic_groups}
-    group_id_caps = {group.id: MCQ_COUNT + DESCRIPTIVE_COUNT for _, group in topic_groups}
-
-    for item in raw_activities:
-        raw_topic_tag = str(item.get("topic", "")).strip().lower()
-        match = title_to_group.get(raw_topic_tag)
-        if not match:
-            for key, val in title_to_group.items():
-                if raw_topic_tag in key or key in raw_topic_tag:
-                    match = val
-                    break
-        if not match:
-            continue
-        _, group = match
-        if len(group_id_to_bucket[group.id]) >= group_id_caps[group.id]:
-            continue
-        norm = normalize_activity(item)
-        if norm:
-            group_id_to_bucket[group.id].append(norm)
-
-    total_activities = 0
-    for group_id, normalized in group_id_to_bucket.items():
-        next_act_order = 1
-        for item in normalized:
-            activity = CompChapterActivity(
-                activity_group_id=group_id,
-                comp_chapter_id=comp_chapter_id,
-                sub_chapter_id=sub_chapter_id,
-                type=item["type"],
-                question_text=item["question_text"],
-                options=item.get("options"),
-                correct_option_index=item.get("correct_option_index"),
-                answer_text=item.get("answer_text"),
-                answer_description=item.get("answer_description"),
-                answer_image_url=None,
-                is_published=True,
-                sort_order=next_act_order,
-            )
-            next_act_order += 1
-            session.add(activity)
-        await session.flush()
-        total_activities += len(normalized)
-
     job.result = {
         "documents_processed": doc_count,
         "artifact_ids": {atype: a.id for atype, a in artifacts.items()},
-        "topics_count": len(saved_topics),
-        "activity_groups_count": len(saved_topics),
-        "activities_count": total_activities,
     }
 
 
@@ -730,24 +463,22 @@ async def _run_comp_topics_save_job(job: ActivityGenerationJob, session):
         raise ValueError("No chapter content found")
 
     cleaned = _clean_topics(topics)
+
+    # Clear existing topics before inserting fresh ones
     filter_col = CompTopic.comp_chapter_id if comp_chapter_id else CompTopic.sub_chapter_id
     filter_val = comp_chapter_id or sub_chapter_id
-    result = await session.exec(select(func.max(CompTopic.sort_order)).where(filter_col == filter_val))
-    max_order = result.first()
-    if isinstance(max_order, tuple):
-        max_order = max_order[0]
-    next_order = (max_order or 0) + 1
+    await session.exec(delete(CompTopic).where(filter_col == filter_val))
+    await session.flush()
 
     created_ids = []
-    for t in cleaned:
+    for idx, t in enumerate(cleaned):
         topic = CompTopic(
             title=t["title"],
             summary=t.get("summary"),
             comp_chapter_id=comp_chapter_id,
             sub_chapter_id=sub_chapter_id,
-            sort_order=next_order,
+            sort_order=idx + 1,
         )
-        next_order += 1
         session.add(topic)
         await session.flush()
         created_ids.append(topic.id)

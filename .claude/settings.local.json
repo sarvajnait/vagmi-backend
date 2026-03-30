@@ -50,7 +50,8 @@
       "Bash(for f:*)",
       "Bash(do)",
       "Read(//d/projects/vagmi-backend/**)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(uv run:*)"
     ],
     "deny": [],
     "ask": []
