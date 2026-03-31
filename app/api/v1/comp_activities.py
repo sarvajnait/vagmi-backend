@@ -187,9 +187,17 @@ def _parse_option_line(option_line: str, expected_letters: tuple[str, str]) -> d
 
 def _parse_docx_rows(content: bytes) -> list[dict]:
     paragraphs = _extract_docx_paragraphs(content)
-    topic_re = re.compile(r"^TOPIC\s+\d+\s*:\s*(.+)$", re.IGNORECASE)
+    # Flexible topic regex: matches "TOPIC 1: ..." or "Topic 1: ..."
+    topic_re = re.compile(r"^(?:TOPIC|Topic)\s+\d+\s*:\s*(.+)$", re.IGNORECASE)
     number_re = re.compile(r"^\d+$")
     answer_re = re.compile(r"^\(([a-d])\)$", re.IGNORECASE)
+    
+    # Headers to skip within sections
+    noise_headers = {
+        "Q.No", "Question & Options", "Answer", "Explanation", "Q.", 
+        "(10 CTET-Style MCQs — Attempt all, then check answers below)"
+    }
+    
     terminal_markers = {
         "SELF-ASSESSMENT SCORE TRACKER",
         "FINAL REVISION STRATEGY",
@@ -199,7 +207,8 @@ def _parse_docx_rows(content: bytes) -> list[dict]:
     rows: list[dict] = []
     i = 0
     while i < len(paragraphs):
-        topic_match = topic_re.match(paragraphs[i])
+        p = paragraphs[i].strip()
+        topic_match = topic_re.match(p)
         if not topic_match:
             i += 1
             continue
@@ -207,73 +216,117 @@ def _parse_docx_rows(content: bytes) -> list[dict]:
         topic_name = topic_match.group(1).strip()
         i += 1
 
-        while i < len(paragraphs) and paragraphs[i] != "Questions":
+        # Find the start of questions section
+        while i < len(paragraphs) and "Questions" not in paragraphs[i]:
             if topic_re.match(paragraphs[i]):
                 break
             i += 1
+        
         if i >= len(paragraphs) or topic_re.match(paragraphs[i]):
             continue
-
-        i += 3
+        
+        i += 1 # Skip the "Questions" marker itself
+        
         question_map: dict[int, dict] = {}
-
-        while i < len(paragraphs) and paragraphs[i] != "Answer Key with Explanations":
-            if topic_re.match(paragraphs[i]):
+        
+        # Parse Questions
+        while i < len(paragraphs) and "Answer Key" not in paragraphs[i]:
+            p = paragraphs[i].strip()
+            if topic_re.match(p):
                 break
-            if not number_re.match(paragraphs[i]):
+            if p in noise_headers or not number_re.match(p):
                 i += 1
                 continue
-
-            qno = int(paragraphs[i])
-            if i + 3 >= len(paragraphs):
-                raise ValueError(f"Incomplete question block for topic '{topic_name}' question {qno}")
-
-            question_text = paragraphs[i + 1].strip()
+            
+            qno = int(p)
+            i += 1
+            
+            # Skip noise if any after number
+            while i < len(paragraphs) and paragraphs[i].strip() in noise_headers:
+                i += 1
+                
+            if i >= len(paragraphs):
+                break
+                
+            question_text = paragraphs[i].strip()
+            i += 1
+            
             options = {}
-            options.update(_parse_option_line(paragraphs[i + 2], ("a", "b")))
-            options.update(_parse_option_line(paragraphs[i + 3], ("c", "d")))
-
-            if len(options) != 4:
-                raise ValueError(f"Could not parse 4 options for topic '{topic_name}' question {qno}")
-
-            question_map[qno] = {
-                "topic_name": topic_name,
-                "question_text": question_text,
-                "option_a": options.get("option_a", ""),
-                "option_b": options.get("option_b", ""),
-                "option_c": options.get("option_c", ""),
-                "option_d": options.get("option_d", ""),
-                "source_row": f"{topic_name} Q{qno}",
-            }
-            i += 4
-
-        if i >= len(paragraphs) or paragraphs[i] != "Answer Key with Explanations":
-            raise ValueError(f"Answer key not found for topic '{topic_name}'")
-
-        i += 3
-        while i < len(paragraphs):
-            if paragraphs[i] in terminal_markers:
-                break
-            if topic_re.match(paragraphs[i]):
-                break
-            if not number_re.match(paragraphs[i]):
+            # Try to find 4 options (a, b, c, d) in subsequent lines
+            # They could be 2 per line or 1 per line
+            while i < len(paragraphs) and len(options) < 4:
+                line = paragraphs[i].strip()
+                if number_re.match(line) or topic_re.match(line) or "Answer Key" in line:
+                    break
+                
+                # Parse all (x) patterns in the line
+                matches = list(re.finditer(r"\(([a-d])\)\s*", line, flags=re.IGNORECASE))
+                if matches:
+                    for idx, match in enumerate(matches):
+                        letter = match.group(1).lower()
+                        start = match.end()
+                        end = matches[idx+1].start() if idx + 1 < len(matches) else len(line)
+                        options[f"option_{letter}"] = line[start:end].strip()
                 i += 1
-                continue
-
-            qno = int(paragraphs[i])
-            if i + 2 >= len(paragraphs):
-                raise ValueError(f"Incomplete answer block for topic '{topic_name}' question {qno}")
-            answer_match = answer_re.match(paragraphs[i + 1].strip())
-            if not answer_match:
-                raise ValueError(f"Invalid answer format for topic '{topic_name}' question {qno}")
-            explanation = paragraphs[i + 2].strip()
-            if qno not in question_map:
-                raise ValueError(f"Answer exists without question for topic '{topic_name}' question {qno}")
-            question_map[qno]["correct_option_index"] = _parse_correct_index(answer_match.group(1))
-            question_map[qno]["answer_description"] = explanation
-            i += 3
-
-        rows.extend(question_map[qno] for qno in sorted(question_map))
+            
+            if len(options) == 4:
+                question_map[qno] = {
+                    "topic_name": topic_name,
+                    "question_text": question_text,
+                    "option_a": options.get("option_a", ""),
+                    "option_b": options.get("option_b", ""),
+                    "option_c": options.get("option_c", ""),
+                    "option_d": options.get("option_d", ""),
+                    "source_row": f"{topic_name} Q{qno}",
+                }
+            # If we didn't find 4 options, this question is invalid or we hit the next block
+            
+        # Parse Answer Key
+        while i < len(paragraphs) and "Answer Key" not in paragraphs[i]:
+            i += 1
+            
+        if i < len(paragraphs) and "Answer Key" in paragraphs[i]:
+            i += 1 # skip header
+            
+            while i < len(paragraphs):
+                p = paragraphs[i].strip()
+                if p in terminal_markers or topic_re.match(p):
+                    break
+                
+                if p in noise_headers or not number_re.match(p):
+                    i += 1
+                    continue
+                
+                qno = int(p)
+                i += 1
+                
+                # Next line should be the answer (a)
+                while i < len(paragraphs) and paragraphs[i].strip() in noise_headers:
+                    i += 1
+                
+                if i >= len(paragraphs): break
+                answer_match = answer_re.match(paragraphs[i].strip())
+                if not answer_match:
+                    i += 1
+                    continue
+                
+                letter = answer_match.group(1)
+                i += 1
+                
+                # Next line(s) should be the explanation
+                while i < len(paragraphs) and paragraphs[i].strip() in noise_headers:
+                    i += 1
+                
+                if i >= len(paragraphs): break
+                explanation = paragraphs[i].strip()
+                i += 1
+                
+                if qno in question_map:
+                    question_map[qno]["correct_option_index"] = _parse_correct_index(letter)
+                    question_map[qno]["answer_description"] = explanation
+        
+        # Only add questions that have an answer
+        rows.extend(q for q in question_map.values() if "correct_option_index" in q)
 
     if not rows:
         raise ValueError("No MCQ content could be parsed from the DOCX file")
