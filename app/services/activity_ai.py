@@ -818,25 +818,47 @@ def _extract_docx_content(content_bytes: bytes) -> tuple[str, dict[str, bytes]]:
     return "\n\n".join(segments), images
 
 
+def _optimize_image(img_bytes: bytes, max_width: int = 800) -> tuple[bytes, str]:
+    """Resize image to max_width and convert to WebP. Returns (optimized_bytes, 'webp')."""
+    from PIL import Image
+    from io import BytesIO
+
+    img = Image.open(BytesIO(img_bytes))
+    # Convert palette/RGBA to RGB for WebP compatibility
+    if img.mode in ("P", "RGBA"):
+        img = img.convert("RGBA")
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    if img.width > max_width:
+        new_height = round(img.height * max_width / img.width)
+        img = img.resize((max_width, new_height), Image.LANCZOS)
+
+    buf = BytesIO()
+    img.save(buf, format="WEBP", quality=82, optimize=True)
+    return buf.getvalue(), "webp"
+
+
 def convert_docx_to_notes_markdown(content_bytes: bytes, note_id: int | None = None) -> str:
     from app.utils.files import upload_bytes_to_do
-    import mimetypes
 
     text_with_placeholders, images = _extract_docx_content(content_bytes)
     if not text_with_placeholders.strip():
         raise ValueError("No text content found in DOCX file")
 
-    # Upload images and replace placeholders with CDN URLs
+    # Upload images (optimized to WebP) and replace placeholders with CDN URLs
     uploaded: dict[str, str] = {}
     for archive_path, img_bytes in images.items():
-        filename = archive_path.split("/")[-1]
-        mime = mimetypes.guess_type(filename)[0] or "image/png"
+        original_filename = archive_path.split("/")[-1]
+        stem = original_filename.rsplit(".", 1)[0]
         do_path = f"comp/notes/images/{note_id or 'misc'}"
         try:
-            url = upload_bytes_to_do(img_bytes, filename, do_path, content_type=mime)
+            optimized_bytes, ext = _optimize_image(img_bytes)
+            webp_filename = f"{stem}.{ext}"
+            url = upload_bytes_to_do(optimized_bytes, webp_filename, do_path, content_type="image/webp")
             uploaded[archive_path] = url
         except Exception as e:
-            logger.warning(f"Could not upload DOCX image {filename}: {e}")
+            logger.warning(f"Could not upload DOCX image {original_filename}: {e}")
 
     # Replace IMAGE:path placeholders with markdown image syntax
     lines = text_with_placeholders.split("\n\n")
@@ -846,8 +868,9 @@ def convert_docx_to_notes_markdown(content_bytes: bytes, note_id: int | None = N
             archive_path = line[6:]
             url = uploaded.get(archive_path)
             if url:
-                filename = archive_path.split("/")[-1]
-                resolved_lines.append(f"![{filename}]({url})")
+                original_filename = archive_path.split("/")[-1]
+                stem = original_filename.rsplit(".", 1)[0]
+                resolved_lines.append(f"![{stem}]({url})")
             # silently drop images that failed to upload
         else:
             resolved_lines.append(line)
