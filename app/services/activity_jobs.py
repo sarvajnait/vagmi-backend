@@ -12,6 +12,7 @@ from app.models.comp_student_content import CompStudentTextbook, CompStudentNote
 from app.services.activity_ai import (
     generate_activities, generate_topics, normalize_activity,
     generate_chapter_summary, generate_one_mark_questions, generate_important_questions,
+    convert_docx_to_notes_markdown, convert_excel_to_notes_markdown,
     BOARD_TEXTBOOK_COLLECTION, BOARD_QA_COLLECTION,
     COMP_TEXTBOOK_COLLECTION, COMP_QA_COLLECTION,
 )
@@ -565,6 +566,45 @@ async def _run_comp_activities_job(job: ActivityGenerationJob, session):
     job.result = {"created_ids": created_ids, "count": len(created_ids), "activity_group_id": activity_group_id}
 
 
+async def _run_comp_notes_convert_job(job: ActivityGenerationJob, session):
+    import aiohttp
+
+    note_id = job.payload.get("note_id")
+    source = job.payload.get("source")
+    file_url = job.payload.get("file_url")
+
+    note = await session.get(CompStudentNote, note_id)
+    if not note:
+        raise ValueError(f"Note id={note_id} not found")
+
+    async with aiohttp.ClientSession() as http:
+        async with http.get(file_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+            resp.raise_for_status()
+            content_bytes = await resp.read()
+
+    if source == "docx_upload":
+        markdown = await asyncio.get_event_loop().run_in_executor(
+            None, convert_docx_to_notes_markdown, content_bytes, note_id
+        )
+    elif source == "excel_upload":
+        markdown = await asyncio.get_event_loop().run_in_executor(
+            None, convert_excel_to_notes_markdown, content_bytes
+        )
+    else:
+        raise ValueError(f"Unknown source: {source}")
+
+    word_count = len(markdown.split())
+    read_time_min = max(1, round(word_count / 200))
+
+    note.content = markdown
+    note.content_status = "completed"
+    note.word_count = word_count
+    note.read_time_min = read_time_min
+    session.add(note)
+
+    job.result = {"note_id": note_id, "word_count": word_count, "read_time_min": read_time_min}
+
+
 async def _run_comp_audio_generation_job(job: ActivityGenerationJob, session):
     from app.services.audio_generation import generate_audio_from_pdf
 
@@ -646,6 +686,8 @@ async def run_activity_job(job_id: int):
                 await _run_comp_activities_job(job, session)
             elif job.job_type == "comp_audio_generation":
                 await _run_comp_audio_generation_job(job, session)
+            elif job.job_type == "comp_notes_convert":
+                await _run_comp_notes_convert_job(job, session)
             else:
                 raise ValueError("Unsupported job type")
 
@@ -736,6 +778,17 @@ async def run_activity_job(job_id: int):
                     if record:
                         record.audio_status = "failed"
                         session.add(record)
+                except Exception:
+                    pass
+
+            if job.job_type == "comp_notes_convert":
+                try:
+                    note_id = (job.payload or {}).get("note_id")
+                    if note_id:
+                        note = await session.get(CompStudentNote, note_id)
+                        if note:
+                            note.content_status = "failed"
+                            session.add(note)
                 except Exception:
                     pass
 

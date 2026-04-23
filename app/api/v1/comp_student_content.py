@@ -230,6 +230,13 @@ async def update_comp_student_textbook(
 # Student Notes Endpoints
 # ============================================================
 
+def _note_source(filename: str) -> str:
+    name = (filename or "").lower()
+    if name.endswith(".xlsx") or name.endswith(".xls"):
+        return "excel_upload"
+    return "docx_upload"
+
+
 @router.post("/notes")
 async def upload_comp_student_note(
     background_tasks: BackgroundTasks,
@@ -238,13 +245,19 @@ async def upload_comp_student_note(
     sub_chapter_id: Optional[int] = Form(None),
     title: str = Form(...),
     description: Optional[str] = Form(None),
+    language: str = Form("en"),
     session: AsyncSession = Depends(get_session),
 ):
     try:
+        filename = file.filename or ""
+        if not (filename.lower().endswith(".docx") or filename.lower().endswith(".xlsx")):
+            raise HTTPException(status_code=400, detail="Only .docx and .xlsx files are supported")
+
         comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
         folder_id = comp_chapter_id or sub_chapter_id
         do_path = f"comp/chapters/{folder_id}/student-content/notes"
         file_url = upload_to_do(file, do_path)
+        source = _note_source(filename)
 
         filter_col = CompStudentNote.comp_chapter_id if comp_chapter_id else CompStudentNote.sub_chapter_id
         filter_val = comp_chapter_id or sub_chapter_id
@@ -259,23 +272,24 @@ async def upload_comp_student_note(
             title=title,
             description=description,
             file_url=file_url,
+            original_filename=filename,
             sort_order=(max_order or 0) + 1,
-            original_filename=file.filename,
-            audio_status="processing",
+            content_status="processing",
+            is_published=False,
+            source=source,
+            language=language,
         )
         session.add(note)
         await session.commit()
         await session.refresh(note)
 
         job = ActivityGenerationJob(
-            job_type="comp_audio_generation",
+            job_type="comp_notes_convert",
             status="pending",
             payload={
-                "resource_type": "notes",
-                "resource_id": note.id,
+                "note_id": note.id,
                 "file_url": file_url,
-                "comp_chapter_id": comp_chapter_id,
-                "sub_chapter_id": sub_chapter_id,
+                "source": source,
             },
         )
         session.add(job)
@@ -285,11 +299,7 @@ async def upload_comp_student_note(
         from app.services.activity_jobs import enqueue_activity_job
         background_tasks.add_task(enqueue_activity_job, job.id)
 
-        return {
-            "message": "Note uploaded. Audio generation in progress.",
-            "data": note.dict(),
-            "job_id": job.id,
-        }
+        return {"message": "Note uploaded. Converting to markdown…", "data": note.dict(), "job_id": job.id}
     except HTTPException:
         raise
     except Exception as e:
@@ -311,6 +321,50 @@ async def get_comp_student_notes(
     query = query.order_by(*sort_ordering(CompStudentNote))
     result = await session.exec(query)
     return {"data": [r.dict() for r in result.all()]}
+
+
+@router.get("/notes/published")
+async def get_published_comp_notes(
+    comp_chapter_id: Optional[int] = None,
+    sub_chapter_id: Optional[int] = None,
+    language: Optional[str] = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """Student-facing: returns only published notes, without full content (list view)."""
+    query = select(CompStudentNote).where(CompStudentNote.is_published == True)
+    if comp_chapter_id is not None:
+        query = query.where(CompStudentNote.comp_chapter_id == comp_chapter_id)
+    elif sub_chapter_id is not None:
+        query = query.where(CompStudentNote.sub_chapter_id == sub_chapter_id)
+    if language:
+        query = query.where(CompStudentNote.language == language)
+    query = query.order_by(*sort_ordering(CompStudentNote))
+    result = await session.exec(query)
+    notes = result.all()
+    return {
+        "data": [
+            {
+                "id": n.id,
+                "title": n.title,
+                "description": n.description,
+                "language": n.language,
+                "version": n.version,
+                "word_count": n.word_count,
+                "read_time_min": n.read_time_min,
+                "updated_at": n.updated_at,
+            }
+            for n in notes
+        ]
+    }
+
+
+@router.get("/notes/published/{note_id}")
+async def get_published_comp_note(note_id: int, session: AsyncSession = Depends(get_session)):
+    """Student-facing: returns full note content for rendering."""
+    note = await session.get(CompStudentNote, note_id)
+    if not note or not note.is_published:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"data": note.dict()}
 
 
 @router.put("/notes/order")
@@ -340,7 +394,10 @@ async def delete_comp_student_note(note_id: int, session: AsyncSession = Depends
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     if note.file_url:
-        delete_from_do(note.file_url)
+        try:
+            delete_from_do(note.file_url)
+        except Exception:
+            pass
     if note.audio_url:
         try:
             delete_from_do(note.audio_url)
@@ -358,6 +415,8 @@ async def update_comp_student_note(
     file: UploadFile | None = File(None),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    language: Optional[str] = Form(None),
+    is_published: Optional[bool] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -368,35 +427,39 @@ async def update_comp_student_note(
             note.title = title
         if description is not None:
             note.description = description
+        if language is not None:
+            note.language = language
+        if is_published is not None:
+            note.is_published = is_published
         job_id = None
         if file:
+            filename = file.filename or ""
+            if not (filename.lower().endswith(".docx") or filename.lower().endswith(".xlsx")):
+                raise HTTPException(status_code=400, detail="Only .docx and .xlsx files are supported")
             folder_id = note.comp_chapter_id or note.sub_chapter_id
             new_url = upload_to_do(file, f"comp/chapters/{folder_id}/student-content/notes")
             if note.file_url:
-                delete_from_do(note.file_url)
-            if note.audio_url:
                 try:
-                    delete_from_do(note.audio_url)
+                    delete_from_do(note.file_url)
                 except Exception:
                     pass
+            source = _note_source(filename)
             note.file_url = new_url
-            note.original_filename = file.filename
-            note.audio_url = None
-            note.audio_status = "processing"
+            note.original_filename = filename
+            note.source = source
+            note.content = None
+            note.content_status = "processing"
+            note.version = (note.version or 1) + 1
+            note.word_count = None
+            note.read_time_min = None
         session.add(note)
         await session.commit()
         await session.refresh(note)
         if file:
             job = ActivityGenerationJob(
-                job_type="comp_audio_generation",
+                job_type="comp_notes_convert",
                 status="pending",
-                payload={
-                    "resource_type": "notes",
-                    "resource_id": note.id,
-                    "file_url": note.file_url,
-                    "comp_chapter_id": note.comp_chapter_id,
-                    "sub_chapter_id": note.sub_chapter_id,
-                },
+                payload={"note_id": note.id, "file_url": note.file_url, "source": note.source},
             )
             session.add(job)
             await session.commit()

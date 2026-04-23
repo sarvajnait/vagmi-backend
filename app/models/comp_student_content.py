@@ -1,5 +1,5 @@
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import Column, Integer, ForeignKey
+from sqlalchemy import Column, Integer, ForeignKey, Text
 from sqlmodel import SQLModel, Field
 from app.models.base import BaseModel
 
@@ -56,9 +56,19 @@ class CompStudentNoteBase(SQLModel):
     )
     title: str
     description: Optional[str] = None
-    file_url: str
+    file_url: Optional[str] = None
     sort_order: Optional[int] = Field(default=None)
     original_filename: Optional[str] = None
+    # Extended Markdown content
+    content: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    content_status: Optional[str] = None  # "processing" | "completed" | "failed"
+    is_published: bool = Field(default=False)
+    version: int = Field(default=1)
+    word_count: Optional[int] = None
+    read_time_min: Optional[int] = None
+    source: Optional[str] = None  # "docx_upload" | "excel_upload"
+    language: str = Field(default="en")
+    # Audio (future)
     audio_url: Optional[str] = None
     audio_status: Optional[str] = None  # "processing" | "completed" | "failed"
 

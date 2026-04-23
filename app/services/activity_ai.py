@@ -745,3 +745,192 @@ def evaluate_descriptive_answer(
         "score": score,
         "feedback": feedback,
     }
+
+
+# ============================================================
+# Notes Markdown Conversion
+# ============================================================
+
+def _extract_docx_content(content_bytes: bytes) -> tuple[str, dict[str, bytes]]:
+    """
+    Parse DOCX and return:
+    - text: document content with IMAGE:filename placeholders inline
+    - images: dict mapping filename → raw bytes
+    """
+    import zipfile
+    import xml.etree.ElementTree as ET
+    from io import BytesIO
+
+    ns = {
+        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    }
+    rels_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+    with zipfile.ZipFile(BytesIO(content_bytes), "r") as archive:
+        xml_data = archive.read("word/document.xml")
+
+        # Parse relationships: rId → media filename
+        rId_to_file: dict[str, str] = {}
+        try:
+            rels_xml = archive.read("word/_rels/document.xml.rels")
+            rels_root = ET.fromstring(rels_xml)
+            for rel in rels_root.findall(f"{{{rels_ns}}}Relationship"):
+                if "image" in rel.get("Type", "").lower():
+                    target = rel.get("Target", "")  # e.g. media/image1.png
+                    rId_to_file[rel.get("Id", "")] = target.replace("../", "word/").lstrip("/")
+        except KeyError:
+            pass
+
+        # Extract image bytes
+        images: dict[str, bytes] = {}
+        for archive_name in archive.namelist():
+            if archive_name.startswith("word/media/"):
+                images[archive_name] = archive.read(archive_name)
+
+    root = ET.fromstring(xml_data)
+    segments: list[str] = []
+
+    for para in root.findall(".//w:p", ns):
+        # Check if paragraph contains a drawing/image
+        drawing = para.find(".//w:drawing", ns)
+        if drawing is not None:
+            # Find the rId of the embedded image
+            blip = drawing.find(".//{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}blip")
+            if blip is None:
+                blip = drawing.find(".//{http://schemas.openxmlformats.org/drawingml/2006/picture}blip")
+            if blip is None:
+                # Try direct a:blip
+                blip = drawing.find(
+                    ".//{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
+                )
+            if blip is not None:
+                r_embed = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
+                if r_embed and r_embed in rId_to_file:
+                    segments.append(f"IMAGE:{rId_to_file[r_embed]}")
+                    continue
+
+        text = "".join(node.text or "" for node in para.findall(".//w:t", ns)).strip()
+        if text:
+            segments.append(text)
+
+    return "\n\n".join(segments), images
+
+
+def convert_docx_to_notes_markdown(content_bytes: bytes, note_id: int | None = None) -> str:
+    from app.utils.files import upload_bytes_to_do
+    import mimetypes
+
+    text_with_placeholders, images = _extract_docx_content(content_bytes)
+    if not text_with_placeholders.strip():
+        raise ValueError("No text content found in DOCX file")
+
+    # Upload images and replace placeholders with CDN URLs
+    uploaded: dict[str, str] = {}
+    for archive_path, img_bytes in images.items():
+        filename = archive_path.split("/")[-1]
+        mime = mimetypes.guess_type(filename)[0] or "image/png"
+        do_path = f"comp/notes/images/{note_id or 'misc'}"
+        try:
+            url = upload_bytes_to_do(img_bytes, filename, do_path, content_type=mime)
+            uploaded[archive_path] = url
+        except Exception as e:
+            logger.warning(f"Could not upload DOCX image {filename}: {e}")
+
+    # Replace IMAGE:path placeholders with markdown image syntax
+    lines = text_with_placeholders.split("\n\n")
+    resolved_lines = []
+    for line in lines:
+        if line.startswith("IMAGE:"):
+            archive_path = line[6:]
+            url = uploaded.get(archive_path)
+            if url:
+                filename = archive_path.split("/")[-1]
+                resolved_lines.append(f"![{filename}]({url})")
+            # silently drop images that failed to upload
+        else:
+            resolved_lines.append(line)
+    text = "\n\n".join(resolved_lines)
+
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+    prompt = f"""You are converting educational content for a competitive exam preparation app into Extended Markdown format.
+
+Convert the following document text into clean Extended Markdown.
+
+BLOCK TYPES — use these where appropriate:
+- :::formula ... ::: → formulas, equations, key mathematical/scientific rules
+- :::shortcut ... ::: → shortcuts, tricks, mnemonics, quick tips
+- :::pyq_alert ... ::: → previous year question info, exam frequency notes
+- :::mistake ... ::: → common mistakes, errors to avoid
+- :::exam_insight ... ::: → exam pattern info, how the topic is tested
+- :::solved_example ... ::: → worked examples, solved problems
+
+RULES:
+1. Use # for main section headings, ## for sub-sections, ### for sub-sub-sections
+2. Use standard Markdown tables (| col | col |) for data tables
+3. Use **bold** for key terms, *italic* for emphasis
+4. Preserve bullet lists (- item) and numbered lists (1. item)
+5. Each block opens with :::type on its own line and closes with ::: on its own line
+6. Do NOT wrap normal paragraphs in blocks
+7. Keep the content faithful to the original — do not add or remove information
+8. ![image](url) tags are already placed at the correct positions — keep them exactly where they are, each on its own line
+
+DOCUMENT TEXT:
+{text}
+
+Return ONLY the Extended Markdown. No preamble, no commentary, no code fences."""
+
+    response = _invoke_llm_with_retry(llm, [HumanMessage(content=prompt)], "convert_docx_to_notes_markdown")
+    return response.content.strip()
+
+
+def convert_excel_to_notes_markdown(content_bytes: bytes) -> str:
+    from openpyxl import load_workbook
+    from io import BytesIO
+
+    wb = load_workbook(filename=BytesIO(content_bytes), data_only=True)
+    ws = wb.active
+    lines = []
+
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or row[0] is None:
+            continue
+        row_type = str(row[0]).strip().lower()
+        content = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
+        if not content:
+            continue
+
+        if row_type == "heading1":
+            lines.append(f"# {content}\n")
+        elif row_type == "heading2":
+            lines.append(f"## {content}\n")
+        elif row_type == "heading3":
+            lines.append(f"### {content}\n")
+        elif row_type == "paragraph":
+            lines.append(f"{content}\n")
+        elif row_type == "divider":
+            lines.append("---\n")
+        elif row_type in ("formula", "shortcut", "pyq_alert", "mistake", "exam_insight", "solved_example"):
+            lines.append(f":::{row_type}")
+            lines.append(content)
+            for extra in row[2:]:
+                if extra is not None:
+                    lines.append(str(extra).strip())
+            lines.append(":::\n")
+        elif row_type == "mcq":
+            opts = [str(row[i]).strip() if len(row) > i and row[i] is not None else "" for i in range(2, 6)]
+            correct = str(row[6]).strip() if len(row) > 6 and row[6] is not None else "0"
+            explanation = str(row[7]).strip() if len(row) > 7 and row[7] is not None else ""
+            lines.append(":::mcq")
+            lines.append(f"question: {content}")
+            lines.append(f"options: {json.dumps(opts)}")
+            lines.append(f"correct: {correct}")
+            if explanation:
+                lines.append(f"explanation: {explanation}")
+            lines.append(":::\n")
+
+    if not lines:
+        raise ValueError("No content found in Excel file. Ensure data starts from row 2 with type in column A and content in column B.")
+
+    return "\n".join(lines)

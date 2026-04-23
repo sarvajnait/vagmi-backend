@@ -83,6 +83,41 @@ def upload_to_do(file: UploadFile, path: str) -> str:
     return public_url
 
 
+def upload_bytes_to_do(data: bytes, filename: str, path: str, content_type: str = "application/octet-stream") -> str:
+    """Upload raw bytes to DigitalOcean Spaces and return the public URL."""
+    if not ACCESS_KEY or not SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Missing DigitalOcean credentials")
+
+    s3_client = boto3.client(
+        "s3",
+        region_name=DO_REGION,
+        endpoint_url=DO_ENDPOINT,
+        aws_access_key_id=ACCESS_KEY,
+        aws_secret_access_key=SECRET_KEY,
+    )
+
+    safe_name = _safe_filename(filename)
+    object_key = f"{path}/{uuid.uuid4().hex}_{safe_name}"
+
+    def _upload():
+        s3_client.upload_fileobj(
+            BytesIO(data),
+            DO_BUCKET,
+            object_key,
+            ExtraArgs={"ACL": "public-read", "ContentType": content_type},
+        )
+
+    try:
+        _retry_do_operation(f"Upload bytes to DO ({object_key})", _upload)
+    except Exception as e:
+        logger.error(f"Error uploading bytes to DO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    public_url = f"{DO_ENDPOINT}/{DO_BUCKET}/{object_key}"
+    logger.info(f"Bytes uploaded to DigitalOcean: {public_url}")
+    return public_url
+
+
 def delete_from_do(file_url: str):
     """Delete a file from DigitalOcean Spaces given its public URL."""
     if not ACCESS_KEY or not SECRET_KEY:
