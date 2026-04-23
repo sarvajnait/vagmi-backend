@@ -6,9 +6,7 @@ from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.api.v1.admin.auth import get_current_user as get_current_admin
 from app.models import Chapter, ActivityGenerationJob, Topic
-from app.models.admin import Admin
 from app.services.database import get_session
 from app.services.activity_jobs import enqueue_activity_job
 
@@ -29,7 +27,6 @@ class TopicUpdateRequest(BaseModel):
 @router.get("/")
 async def get_topics(
     chapter_id: int = Query(...),
-    _: Admin = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     query = select(Topic).where(Topic.chapter_id == chapter_id).order_by(
@@ -43,7 +40,6 @@ async def get_topics(
 @router.post("/")
 async def create_topic(
     payload: TopicCreateRequest,
-    _: Admin = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     chapter = await session.get(Chapter, payload.chapter_id)
@@ -74,7 +70,6 @@ async def create_topic(
 @router.delete("/{topic_id}")
 async def delete_topic(
     topic_id: int,
-    _: Admin = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     topic = await session.get(Topic, topic_id)
@@ -89,7 +84,6 @@ async def delete_topic(
 async def ai_generate_topics(
     chapter_id: int = Query(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    _: Admin = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     chapter = await session.get(Chapter, chapter_id)

@@ -28,6 +28,13 @@ def _clean_topics(topics: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     return cleaned
 
 
+def _clean_topics_or_raise(topics: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    cleaned = _clean_topics(topics)
+    if not cleaned:
+        raise ValueError("No valid topics generated")
+    return cleaned
+
+
 async def _run_topics_job(job: ActivityGenerationJob, session):
     from app.models import Subject
 
@@ -63,9 +70,9 @@ async def _run_topics_save_job(job: ActivityGenerationJob, session):
     if not topics:
         raise ValueError("No chapter content found")
 
-    cleaned = _clean_topics(topics)
+    cleaned = _clean_topics_or_raise(topics)
 
-    # Clear existing topics before inserting fresh ones
+    # Replace only after we have a validated topic list to save.
     await session.exec(delete(Topic).where(Topic.chapter_id == chapter_id))
     await session.flush()
 
@@ -462,9 +469,9 @@ async def _run_comp_topics_save_job(job: ActivityGenerationJob, session):
     if not topics:
         raise ValueError("No chapter content found")
 
-    cleaned = _clean_topics(topics)
+    cleaned = _clean_topics_or_raise(topics)
 
-    # Clear existing topics before inserting fresh ones
+    # Replace only after we have a validated topic list to save.
     filter_col = CompTopic.comp_chapter_id if comp_chapter_id else CompTopic.sub_chapter_id
     filter_val = comp_chapter_id or sub_chapter_id
     await session.exec(delete(CompTopic).where(filter_col == filter_val))
@@ -644,8 +651,14 @@ async def run_activity_job(job_id: int):
 
             job.status = "completed"
         except Exception as e:
+            failed_payload = dict(job.payload or {})
+            await session.rollback()
+            job = await session.get(ActivityGenerationJob, job_id)
+            if not job:
+                return
             job.status = "failed"
             job.error = str(e)
+            job.payload = failed_payload
 
             # For textbook_process jobs: mark the artifact as failed immediately
             # so the frontend doesn't stay stuck on "processing" in the same session.

@@ -1,5 +1,7 @@
 import os
+import random
 import re
+import time
 import uuid
 from fastapi import UploadFile, HTTPException
 from starlette.datastructures import Headers
@@ -13,6 +15,8 @@ DO_BUCKET = "vagmi"
 DO_ENDPOINT = f"https://{DO_REGION}.digitaloceanspaces.com"
 ACCESS_KEY = os.getenv("DO_SPACES_ACCESS_KEY")
 SECRET_KEY = os.getenv("DO_SPACES_SECRET_KEY")
+DO_RETRY_MAX_ATTEMPTS = 3
+DO_RETRY_BASE_DELAY_SEC = 1.0
 
 
 def _safe_filename(filename: str) -> str:
@@ -21,6 +25,26 @@ def _safe_filename(filename: str) -> str:
     name = filename.strip().replace("\\", "_").replace("/", "_")
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
     return name or "file"
+
+
+def _retry_do_operation(operation_name: str, func):
+    last_exc = None
+    for attempt in range(1, DO_RETRY_MAX_ATTEMPTS + 1):
+        try:
+            return func()
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= DO_RETRY_MAX_ATTEMPTS:
+                raise
+            delay = DO_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1)) + random.uniform(0, 0.3)
+            logger.warning(
+                f"{operation_name} failed (attempt {attempt}/{DO_RETRY_MAX_ATTEMPTS}): {exc}. "
+                f"Retrying in {delay:.1f}s"
+            )
+            time.sleep(delay)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"{operation_name} failed without a captured exception")
 
 
 def upload_to_do(file: UploadFile, path: str) -> str:
@@ -40,12 +64,16 @@ def upload_to_do(file: UploadFile, path: str) -> str:
     object_key = f"{path}/{uuid.uuid4().hex}_{safe_name}"
 
     try:
-        s3_client.upload_fileobj(
-            file.file,
-            DO_BUCKET,
-            object_key,
-            ExtraArgs={"ACL": "public-read", "ContentType": file.content_type},
-        )
+        def _upload():
+            file.file.seek(0)
+            s3_client.upload_fileobj(
+                file.file,
+                DO_BUCKET,
+                object_key,
+                ExtraArgs={"ACL": "public-read", "ContentType": file.content_type},
+            )
+
+        _retry_do_operation(f"Upload to DO ({object_key})", _upload)
     except Exception as e:
         logger.error(f"Error uploading file to DO: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -70,7 +98,10 @@ def delete_from_do(file_url: str):
 
     try:
         object_key = file_url.split(f"{DO_BUCKET}/")[-1]
-        s3_client.delete_object(Bucket=DO_BUCKET, Key=object_key)
+        _retry_do_operation(
+            f"Delete from DO ({object_key})",
+            lambda: s3_client.delete_object(Bucket=DO_BUCKET, Key=object_key),
+        )
         logger.info(f"Deleted file from DigitalOcean: {object_key}")
     except Exception as e:
         logger.error(f"Error deleting file from DigitalOcean: {e}")

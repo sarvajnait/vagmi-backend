@@ -1,5 +1,7 @@
 import json
+import random
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +20,27 @@ COMP_QA_COLLECTION = "comp_qa_patterns"
 
 MAX_TOPIC_CHARS = 12000
 MAX_ACTIVITY_CHUNK_CHARS = 12000
+LLM_RETRY_MAX_ATTEMPTS = 3
+LLM_RETRY_BASE_DELAY_SEC = 1.5
+_RETRYABLE_LLM_ERROR_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in [
+        r"\b429\b",
+        r"\b5\d{2}\b",
+        r"rate limit",
+        r"resource exhausted",
+        r"quota",
+        r"deadline exceeded",
+        r"timed?\s*out",
+        r"timeout",
+        r"temporar",
+        r"unavailable",
+        r"connection reset",
+        r"connection aborted",
+        r"service unavailable",
+        r"internal error",
+    ]
+]
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -27,6 +50,33 @@ def _extract_json(text: str) -> Dict[str, Any]:
     if not match:
         raise ValueError("No JSON object found in AI response")
     return json.loads(match.group(0))
+
+
+def _is_retryable_llm_error(exc: Exception) -> bool:
+    message = str(exc)
+    return any(pattern.search(message) for pattern in _RETRYABLE_LLM_ERROR_PATTERNS)
+
+
+def _invoke_llm_with_retry(llm, messages, operation_name: str):
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, LLM_RETRY_MAX_ATTEMPTS + 1):
+        try:
+            return llm.invoke(messages)
+        except Exception as exc:
+            last_exc = exc
+            should_retry = _is_retryable_llm_error(exc) and attempt < LLM_RETRY_MAX_ATTEMPTS
+            if not should_retry:
+                raise
+            delay = LLM_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+            logger.warning(
+                f"{operation_name} failed with retryable error "
+                f"(attempt {attempt}/{LLM_RETRY_MAX_ATTEMPTS}): {exc}. "
+                f"Retrying in {delay:.1f}s"
+            )
+            time.sleep(delay)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"{operation_name} failed without a captured exception")
 
 
 # --------------------
@@ -183,11 +233,13 @@ def _generate_topics_from_text(
     )
 
     llm = _get_llm()
-    response = llm.invoke(
+    response = _invoke_llm_with_retry(
+        llm,
         [
-            SystemMessage(content="Act as an expert Curriculum Designer. Your output must be strict JSON only — no markdown, no prose, no extra text."),
+            SystemMessage(content="Act as an expert Curriculum Designer. Your output must be strict JSON only ? no markdown, no prose, no extra text."),
             HumanMessage(content=human_prompt),
-        ]
+        ],
+        operation_name="Topic generation",
     )
     payload = _extract_json(response.content)
     topics = payload.get("topics", [])
@@ -216,11 +268,13 @@ def _consolidate_topics(
     )
 
     llm = _get_llm()
-    response = llm.invoke(
+    response = _invoke_llm_with_retry(
+        llm,
         [
-            SystemMessage(content="Act as an expert Curriculum Designer. Your output must be strict JSON only — no markdown, no prose, no extra text."),
+            SystemMessage(content="Act as an expert Curriculum Designer. Your output must be strict JSON only ? no markdown, no prose, no extra text."),
             HumanMessage(content=human_prompt),
-        ]
+        ],
+        operation_name="Topic consolidation",
     )
     payload = _extract_json(response.content)
     topics = payload.get("topics", [])
@@ -366,15 +420,17 @@ def generate_activities(
     logger.info(f"[chapter={chapter_id}] Calling LLM with structured output (prompt_len={len(human_prompt)})")
     llm = _get_llm().with_structured_output(_ActivityOutput)
     try:
-        result: _ActivityOutput = llm.invoke(
+        result: _ActivityOutput = _invoke_llm_with_retry(
+            llm,
             [
                 SystemMessage(content=(
                     "Act as a Senior Assessment Designer and Subject Matter Expert. "
-                    "Your output must strictly follow the requested JSON schema — "
+                    "Your output must strictly follow the requested JSON schema ? "
                     "no markdown, no prose, no commentary outside the JSON."
                 )),
                 HumanMessage(content=human_prompt),
-            ]
+            ],
+            operation_name=f"Activity generation for chapter {chapter_id}",
         )
     except Exception as exc:
         logger.error(f"[chapter={chapter_id}] Structured output LLM call failed: {exc}")
@@ -457,11 +513,13 @@ def generate_chapter_summary(chapter_id: int, medium_name: str = "", collection_
     )
 
     llm = _get_llm()
-    response = llm.invoke(
+    response = _invoke_llm_with_retry(
+        llm,
         [
-            SystemMessage(content="You are an elite Academic Content Architect. Your goal is to transform a full chapter into a High-Density Revision Guide designed for a student to master the entire chapter in 10–15 minutes."),
+            SystemMessage(content="You are an elite Academic Content Architect. Your goal is to transform a full chapter into a High-Density Revision Guide designed for a student to master the entire chapter in 10?15 minutes."),
             HumanMessage(content=human_prompt),
-        ]
+        ],
+        operation_name=f"Chapter summary generation for chapter {chapter_id}",
     )
     return response.content.strip()
 
@@ -507,11 +565,13 @@ def generate_one_mark_questions(chapter_id: int, medium_name: str = "", collecti
     )
 
     llm = _get_llm()
-    response = llm.invoke(
+    response = _invoke_llm_with_retry(
+        llm,
         [
             SystemMessage(content="You are a Senior Board Examiner and Curriculum Expert specializing in 1-mark question banks."),
             HumanMessage(content=human_prompt),
-        ]
+        ],
+        operation_name=f"One-mark question generation for chapter {chapter_id}",
     )
     return response.content.strip()
 
@@ -558,11 +618,13 @@ def generate_important_questions(chapter_id: int, medium_name: str = "", collect
     )
 
     llm = _get_llm()
-    response = llm.invoke(
+    response = _invoke_llm_with_retry(
+        llm,
         [
             SystemMessage(content="You are a Senior Board Examiner and Curriculum Expert specializing in descriptive question banks."),
             HumanMessage(content=human_prompt),
-        ]
+        ],
+        operation_name=f"Important question generation for chapter {chapter_id}",
     )
     return response.content.strip()
 
@@ -666,11 +728,13 @@ def evaluate_descriptive_answer(
     )
 
     llm = _get_llm()
-    response = llm.invoke(
+    response = _invoke_llm_with_retry(
+        llm,
         [
             SystemMessage(content="You are an assistant that outputs strict JSON only. Do not include markdown or extra text."),
             HumanMessage(content=human_prompt),
-        ]
+        ],
+        operation_name="Descriptive answer evaluation",
     )
     payload = _extract_json(response.content)
     score = max(0, min(100, int(payload.get("score", 0))))

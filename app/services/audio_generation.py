@@ -42,6 +42,10 @@ WAV_SAMPLE_WIDTH = 2  # 16-bit PCM
 TTS_RETRY_MAX_ATTEMPTS = 5
 TTS_RETRY_BASE_DELAY_SEC = 1.5
 TTS_MAX_CONCURRENCY = 5
+DO_RETRY_MAX_ATTEMPTS = 3
+DO_RETRY_BASE_DELAY_SEC = 1.0
+PDF_LOAD_RETRY_MAX_ATTEMPTS = 3
+PDF_LOAD_RETRY_BASE_DELAY_SEC = 1.0
 
 TTS_STYLE_PREFIX = (
     "You are an experienced teacher narrating educational content for students. "
@@ -69,6 +73,26 @@ def _is_retryable_no_content_response(candidate) -> bool:
         return True
     finish = str(getattr(candidate, "finish_reason", "") or "")
     return finish.endswith("OTHER")
+
+
+def _retry_with_backoff(operation_name: str, max_attempts: int, base_delay_sec: float, func):
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return func()
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= max_attempts:
+                raise
+            delay = base_delay_sec * (2 ** (attempt - 1))
+            logger.warning(
+                f"{operation_name} failed (attempt {attempt}/{max_attempts}): {exc}. "
+                f"Retrying in {delay:.1f}s"
+            )
+            time.sleep(delay)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"{operation_name} failed without a captured exception")
 
 
 def _split_text_for_tts(text: str, chunk_size: int = TTS_CHUNK_SIZE) -> list[str]:
@@ -180,11 +204,16 @@ def _upload_audio_to_do(audio_bytes: bytes, do_path: str, filename: str, content
     )
 
     object_key = f"{do_path}/{uuid.uuid4().hex}_{filename}"
-    s3_client.upload_fileobj(
-        io.BytesIO(audio_bytes),
-        DO_BUCKET,
-        object_key,
-        ExtraArgs={"ACL": "public-read", "ContentType": content_type},
+    _retry_with_backoff(
+        f"Audio upload to DO ({object_key})",
+        DO_RETRY_MAX_ATTEMPTS,
+        DO_RETRY_BASE_DELAY_SEC,
+        lambda: s3_client.upload_fileobj(
+            io.BytesIO(audio_bytes),
+            DO_BUCKET,
+            object_key,
+            ExtraArgs={"ACL": "public-read", "ContentType": content_type},
+        ),
     )
     return f"{DO_ENDPOINT}/{DO_BUCKET}/{object_key}"
 
@@ -209,7 +238,12 @@ def generate_audio_from_pdf(
     """
     # 1. Load and extract text from PDF
     loader = PyPDFLoader(file_url)
-    pages = loader.load()
+    pages = _retry_with_backoff(
+        f"PDF load for audio generation ({file_url})",
+        PDF_LOAD_RETRY_MAX_ATTEMPTS,
+        PDF_LOAD_RETRY_BASE_DELAY_SEC,
+        loader.load,
+    )
 
     # 2. Convert Kannada legacy encoding
     for page in pages:
