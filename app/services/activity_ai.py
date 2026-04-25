@@ -783,11 +783,17 @@ def _extract_docx_content(content_bytes: bytes) -> tuple[str, dict[str, bytes]]:
         except KeyError:
             pass
 
-        # Extract image bytes
+        # Extract image bytes — keyed by filename only for reliable lookup
         images: dict[str, bytes] = {}
         for archive_name in archive.namelist():
             if archive_name.startswith("word/media/"):
-                images[archive_name] = archive.read(archive_name)
+                filename = archive_name.split("/")[-1]
+                images[filename] = archive.read(archive_name)
+
+    # Build filename-only rId lookup to match images dict keys
+    rId_to_filename: dict[str, str] = {
+        rid: path.split("/")[-1] for rid, path in rId_to_file.items()
+    }
 
     root = ET.fromstring(xml_data)
     segments: list[str] = []
@@ -801,14 +807,13 @@ def _extract_docx_content(content_bytes: bytes) -> tuple[str, dict[str, bytes]]:
             if blip is None:
                 blip = drawing.find(".//{http://schemas.openxmlformats.org/drawingml/2006/picture}blip")
             if blip is None:
-                # Try direct a:blip
                 blip = drawing.find(
                     ".//{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
                 )
             if blip is not None:
                 r_embed = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
-                if r_embed and r_embed in rId_to_file:
-                    segments.append(f"IMAGE:{rId_to_file[r_embed]}")
+                if r_embed and r_embed in rId_to_filename:
+                    segments.append(f"IMAGE:{rId_to_filename[r_embed]}")
                     continue
 
         text = "".join(node.text or "" for node in para.findall(".//w:t", ns)).strip()
@@ -846,7 +851,7 @@ def convert_docx_to_notes_markdown(content_bytes: bytes, note_id: int | None = N
     if not text_with_placeholders.strip():
         raise ValueError("No text content found in DOCX file")
 
-    # Upload images (optimized to WebP) and replace placeholders with CDN URLs
+    # Upload images (optimized to WebP); use numbered markers so Gemini can't corrupt URLs
     uploaded: dict[str, str] = {}
     for archive_path, img_bytes in images.items():
         original_filename = archive_path.split("/")[-1]
@@ -860,23 +865,28 @@ def convert_docx_to_notes_markdown(content_bytes: bytes, note_id: int | None = N
         except Exception as e:
             logger.warning(f"Could not upload DOCX image {original_filename}: {e}")
 
-    # Replace IMAGE:path placeholders with markdown image syntax
+    # Replace IMAGE:path placeholders with <<IMG_N>> markers for Gemini,
+    # and build a lookup table to restore real CDN URLs after Gemini responds.
     lines = text_with_placeholders.split("\n\n")
-    resolved_lines = []
+    marker_to_md: dict[str, str] = {}
+    numbered_lines = []
+    img_counter = 0
     for line in lines:
         if line.startswith("IMAGE:"):
             archive_path = line[6:]
             url = uploaded.get(archive_path)
             if url:
-                original_filename = archive_path.split("/")[-1]
-                stem = original_filename.rsplit(".", 1)[0]
-                resolved_lines.append(f"![{stem}]({url})")
+                img_counter += 1
+                marker = f"<<IMG_{img_counter}>>"
+                stem = archive_path.split("/")[-1].rsplit(".", 1)[0]
+                marker_to_md[marker] = f"![{stem}]({url})"
+                numbered_lines.append(marker)
             # silently drop images that failed to upload
         else:
-            resolved_lines.append(line)
-    text = "\n\n".join(resolved_lines)
+            numbered_lines.append(line)
+    text = "\n\n".join(numbered_lines)
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1, max_output_tokens=65536)
     prompt = f"""You are converting educational content for a competitive exam preparation app into Extended Markdown format.
 
 Convert the following document text into clean Extended Markdown.
@@ -897,7 +907,7 @@ RULES:
 5. Each block opens with :::type on its own line and closes with ::: on its own line
 6. Do NOT wrap normal paragraphs in blocks
 7. Keep the content faithful to the original — do not add or remove information
-8. ![image](url) tags are already placed at the correct positions — keep them exactly where they are, each on its own line
+8. Image markers like <<IMG_1>>, <<IMG_2>> etc. are already placed at the correct positions — output them EXACTLY as-is, each on its own line, do not modify or remove them
 
 DOCUMENT TEXT:
 {text}
@@ -905,7 +915,13 @@ DOCUMENT TEXT:
 Return ONLY the Extended Markdown. No preamble, no commentary, no code fences."""
 
     response = _invoke_llm_with_retry(llm, [HumanMessage(content=prompt)], "convert_docx_to_notes_markdown")
-    return response.content.strip()
+    result = response.content.strip()
+
+    # Restore <<IMG_N>> markers with real CDN markdown image tags
+    for marker, img_md in marker_to_md.items():
+        result = result.replace(marker, img_md)
+
+    return result
 
 
 def convert_excel_to_notes_markdown(content_bytes: bytes) -> str:
