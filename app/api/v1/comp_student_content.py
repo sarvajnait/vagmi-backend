@@ -10,7 +10,7 @@ from app.models.comp_student_content import (
 )
 from app.models import ActivityGenerationJob
 from app.services.database import get_session
-from app.utils.files import upload_to_do, delete_from_do
+from app.utils.files import upload_to_do, delete_from_do, delete_prefix_from_do
 
 router = APIRouter()
 
@@ -411,6 +411,11 @@ async def delete_comp_student_note(note_id: int, session: AsyncSession = Depends
             delete_from_do(note.audio_url)
         except Exception:
             pass
+    # Clean up inline images extracted from the DOCX
+    try:
+        delete_prefix_from_do(f"comp/notes/images/{note_id}/")
+    except Exception:
+        pass
     await session.delete(note)
     await session.commit()
     return {"message": "Note deleted"}

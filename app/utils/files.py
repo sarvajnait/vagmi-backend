@@ -143,6 +143,35 @@ def delete_from_do(file_url: str):
         raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
 
 
+def delete_prefix_from_do(prefix: str):
+    """Delete all objects under a DO Spaces prefix (folder). Silently skips if empty."""
+    if not ACCESS_KEY or not SECRET_KEY:
+        return
+
+    s3_client = boto3.client(
+        "s3",
+        region_name=DO_REGION,
+        endpoint_url=DO_ENDPOINT,
+        aws_access_key_id=ACCESS_KEY,
+        aws_secret_access_key=SECRET_KEY,
+    )
+
+    try:
+        paginator = s3_client.get_paginator("list_objects_v2")
+        keys = []
+        for page in paginator.paginate(Bucket=DO_BUCKET, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                keys.append({"Key": obj["Key"]})
+        if not keys:
+            return
+        # S3 bulk delete allows up to 1000 keys per call
+        for i in range(0, len(keys), 1000):
+            s3_client.delete_objects(Bucket=DO_BUCKET, Delete={"Objects": keys[i:i + 1000]})
+        logger.info(f"Deleted {len(keys)} objects under prefix: {prefix}")
+    except Exception as e:
+        logger.warning(f"Could not delete prefix {prefix} from DO: {e}")
+
+
 def compress_image(
     file: UploadFile,
     max_width: int = 1600,

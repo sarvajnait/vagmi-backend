@@ -886,10 +886,14 @@ def convert_docx_to_notes_markdown(content_bytes: bytes, note_id: int | None = N
             numbered_lines.append(line)
     text = "\n\n".join(numbered_lines)
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1, max_output_tokens=65536)
-    prompt = f"""You are converting educational content for a competitive exam preparation app into Extended Markdown format.
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash",
+        temperature=0.1,
+        max_output_tokens=8192,
+    )
 
-Convert the following document text into clean Extended Markdown.
+    _INSTRUCTIONS = """\
+You are converting educational content for a competitive exam preparation app into Extended Markdown format.
 
 BLOCK TYPES — use these where appropriate:
 - :::formula ... ::: → formulas, equations, key mathematical/scientific rules
@@ -907,15 +911,62 @@ RULES:
 5. Each block opens with :::type on its own line and closes with ::: on its own line
 6. Do NOT wrap normal paragraphs in blocks
 7. Keep the content faithful to the original — do not add or remove information
-8. Image markers like <<IMG_1>>, <<IMG_2>> etc. are already placed at the correct positions — output them EXACTLY as-is, each on its own line, do not modify or remove them
+8. Image markers like <<IMG_1>>, <<IMG_2>> etc. are already placed at the correct positions — output them EXACTLY as-is, each on its own line, do not modify or remove them"""
 
-DOCUMENT TEXT:
-{text}
+    # Split into paragraph-boundary chunks so each Gemini call stays well under the token ceiling
+    CHUNK_CHARS = 6000
+    paragraphs = text.split("\n\n")
+    raw_chunks: list[str] = []
+    current_parts: list[str] = []
+    current_len = 0
+    for para in paragraphs:
+        para_len = len(para) + 2
+        if current_len + para_len > CHUNK_CHARS and current_parts:
+            raw_chunks.append("\n\n".join(current_parts))
+            current_parts, current_len = [para], para_len
+        else:
+            current_parts.append(para)
+            current_len += para_len
+    if current_parts:
+        raw_chunks.append("\n\n".join(current_parts))
 
-Return ONLY the Extended Markdown. No preamble, no commentary, no code fences."""
+    total = len(raw_chunks)
+    logger.info(f"[convert_docx] note_id={note_id} chunks={total} total_chars={len(text)}")
 
-    response = _invoke_llm_with_retry(llm, [HumanMessage(content=prompt)], "convert_docx_to_notes_markdown")
-    result = response.content.strip()
+    parts: list[str] = []
+    for i, chunk in enumerate(raw_chunks, start=1):
+        if i == 1 and total == 1:
+            continuation_note = ""
+        elif i == 1:
+            continuation_note = f"\nNOTE: This is part 1 of {total}. Output only the markdown for this part.\n"
+        else:
+            continuation_note = (
+                f"\nNOTE: This is part {i} of {total} of the same document. "
+                "Continue the markdown seamlessly — do NOT re-output the document title or any content already converted. "
+                "Start directly with the next heading or content.\n"
+            )
+
+        prompt = f"""{_INSTRUCTIONS}{continuation_note}
+DOCUMENT TEXT (part {i} of {total}):
+{chunk}
+
+Return ONLY the Extended Markdown for this part. No preamble, no commentary, no code fences."""
+
+        response = _invoke_llm_with_retry(llm, [HumanMessage(content=prompt)], f"convert_docx_chunk_{i}_of_{total}")
+        finish_reason = (response.response_metadata or {}).get("finish_reason", "unknown")
+        content = response.content
+        logger.info(f"[convert_docx] chunk {i}/{total} finish_reason={finish_reason} content_len={len(content)}")
+        if finish_reason not in ("STOP", "stop", "unknown"):
+            logger.warning(f"[convert_docx] chunk {i}/{total} stopped early: finish_reason={finish_reason}")
+        # Strip markdown code fences the model sometimes wraps output in
+        cleaned = content.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1]
+        if cleaned.endswith("```"):
+            cleaned = cleaned.rsplit("```", 1)[0]
+        parts.append(cleaned.strip())
+
+    result = "\n\n".join(parts)
 
     # Restore <<IMG_N>> markers with real CDN markdown image tags
     for marker, img_md in marker_to_md.items():
