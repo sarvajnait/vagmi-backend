@@ -68,9 +68,10 @@ class CompStudentNoteBase(SQLModel):
     read_time_min: Optional[int] = None
     source: Optional[str] = None  # "docx_upload" | "excel_upload"
     language: str = Field(default="en")
-    # Audio (future)
+    # Audio
     audio_url: Optional[str] = None
     audio_status: Optional[str] = None  # "processing" | "completed" | "failed"
+    audio_sync_json: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
 
 class CompStudentNote(CompStudentNoteBase, BaseModel, table=True):

@@ -360,11 +360,19 @@ async def get_published_comp_notes(
 
 @router.get("/notes/published/{note_id}")
 async def get_published_comp_note(note_id: int, session: AsyncSession = Depends(get_session)):
-    """Student-facing: returns full note content for rendering."""
+    """Student-facing: returns full note content including audio_url and audio_sync_json."""
+    import json as _json
     note = await session.get(CompStudentNote, note_id)
     if not note or not note.is_published:
         raise HTTPException(status_code=404, detail="Note not found")
-    return {"data": note.dict()}
+    data = note.dict()
+    # Parse audio_sync_json string → dict for client consumption
+    if data.get("audio_sync_json"):
+        try:
+            data["audio_sync_json"] = _json.loads(data["audio_sync_json"])
+        except Exception:
+            data["audio_sync_json"] = None
+    return {"data": data}
 
 
 @router.put("/notes/order")
@@ -475,6 +483,40 @@ async def update_comp_student_note(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/notes/{note_id}/generate-audio")
+async def generate_comp_note_audio(
+    note_id: int,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
+    """Admin: enqueue ElevenLabs audio generation with word-level sync for a published note."""
+    note = await session.get(CompStudentNote, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    if note.content_status != "completed" or not note.content:
+        raise HTTPException(status_code=400, detail="Note content must be fully converted before generating audio")
+    if note.audio_status == "processing":
+        raise HTTPException(status_code=409, detail="Audio generation already in progress")
+
+    note.audio_status = "processing"
+    note.audio_sync_json = None
+    session.add(note)
+
+    job = ActivityGenerationJob(
+        job_type="comp_notes_audio",
+        status="pending",
+        payload={"note_id": note_id},
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    from app.services.activity_jobs import enqueue_activity_job
+    background_tasks.add_task(enqueue_activity_job, job.id)
+
+    return {"message": "Audio generation started", "job_id": job.id}
 
 
 # ============================================================

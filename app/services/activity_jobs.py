@@ -605,6 +605,28 @@ async def _run_comp_notes_convert_job(job: ActivityGenerationJob, session):
     job.result = {"note_id": note_id, "word_count": word_count, "read_time_min": read_time_min}
 
 
+async def _run_comp_notes_audio_job(job: ActivityGenerationJob, session):
+    from app.services.elevenlabs_tts import generate_notes_audio_with_sync
+
+    note_id = job.payload.get("note_id")
+    note = await session.get(CompStudentNote, note_id)
+    if not note:
+        raise ValueError(f"Note id={note_id} not found")
+    if note.content_status != "completed" or not note.content:
+        raise ValueError(f"Note id={note_id} has no completed content to generate audio from")
+
+    audio_url, audio_sync_json = await asyncio.get_event_loop().run_in_executor(
+        None, generate_notes_audio_with_sync, note.content, note.id, note.language
+    )
+
+    note.audio_url = audio_url
+    note.audio_status = "completed"
+    note.audio_sync_json = audio_sync_json
+    session.add(note)
+
+    job.result = {"note_id": note_id, "audio_url": audio_url}
+
+
 async def _run_comp_audio_generation_job(job: ActivityGenerationJob, session):
     from app.services.audio_generation import generate_audio_from_pdf
 
@@ -688,6 +710,8 @@ async def run_activity_job(job_id: int):
                 await _run_comp_audio_generation_job(job, session)
             elif job.job_type == "comp_notes_convert":
                 await _run_comp_notes_convert_job(job, session)
+            elif job.job_type == "comp_notes_audio":
+                await _run_comp_notes_audio_job(job, session)
             else:
                 raise ValueError("Unsupported job type")
 
@@ -788,6 +812,17 @@ async def run_activity_job(job_id: int):
                         note = await session.get(CompStudentNote, note_id)
                         if note:
                             note.content_status = "failed"
+                            session.add(note)
+                except Exception:
+                    pass
+
+            if job.job_type == "comp_notes_audio":
+                try:
+                    note_id = (job.payload or {}).get("note_id")
+                    if note_id:
+                        note = await session.get(CompStudentNote, note_id)
+                        if note:
+                            note.audio_status = "failed"
                             session.add(note)
                 except Exception:
                     pass
