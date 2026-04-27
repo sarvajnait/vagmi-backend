@@ -71,7 +71,6 @@ class CompStudentNoteBase(SQLModel):
     # Audio
     audio_url: Optional[str] = None
     audio_status: Optional[str] = None  # "processing" | "completed" | "failed"
-    audio_sync_json: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
 
 class CompStudentNote(CompStudentNoteBase, BaseModel, table=True):

@@ -360,19 +360,11 @@ async def get_published_comp_notes(
 
 @router.get("/notes/published/{note_id}")
 async def get_published_comp_note(note_id: int, session: AsyncSession = Depends(get_session)):
-    """Student-facing: returns full note content including audio_url and audio_sync_json."""
-    import json as _json
+    """Student-facing: returns full note content including audio_url."""
     note = await session.get(CompStudentNote, note_id)
     if not note or not note.is_published:
         raise HTTPException(status_code=404, detail="Note not found")
-    data = note.dict()
-    # Parse audio_sync_json string → dict for client consumption
-    if data.get("audio_sync_json"):
-        try:
-            data["audio_sync_json"] = _json.loads(data["audio_sync_json"])
-        except Exception:
-            data["audio_sync_json"] = None
-    return {"data": data}
+    return {"data": note.dict()}
 
 
 @router.put("/notes/order")
@@ -506,7 +498,6 @@ async def generate_comp_note_audio(
         raise HTTPException(status_code=409, detail="Audio generation already in progress")
 
     note.audio_status = "processing"
-    note.audio_sync_json = None
     session.add(note)
 
     job = ActivityGenerationJob(

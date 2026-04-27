@@ -606,7 +606,7 @@ async def _run_comp_notes_convert_job(job: ActivityGenerationJob, session):
 
 
 async def _run_comp_notes_audio_job(job: ActivityGenerationJob, session):
-    from app.services.elevenlabs_tts import generate_notes_audio_with_sync
+    from app.services.elevenlabs_tts import generate_notes_audio
 
     note_id = job.payload.get("note_id")
     note = await session.get(CompStudentNote, note_id)
@@ -615,13 +615,12 @@ async def _run_comp_notes_audio_job(job: ActivityGenerationJob, session):
     if note.content_status != "completed" or not note.content:
         raise ValueError(f"Note id={note_id} has no completed content to generate audio from")
 
-    audio_url, audio_sync_json = await asyncio.get_event_loop().run_in_executor(
-        None, generate_notes_audio_with_sync, note.content, note.id, note.language
+    audio_url = await asyncio.get_event_loop().run_in_executor(
+        None, generate_notes_audio, note.content, note.id, note.language
     )
 
     note.audio_url = audio_url
     note.audio_status = "completed"
-    note.audio_sync_json = audio_sync_json
     session.add(note)
 
     job.result = {"note_id": note_id, "audio_url": audio_url}
