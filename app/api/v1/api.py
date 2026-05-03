@@ -28,6 +28,7 @@ from app.api.v1.comp_llm_resources import router as comp_llm_resources_router
 from app.api.v1.comp_student_content import router as comp_student_content_router
 from app.api.v1.comp_activities import router as comp_activities_router
 from app.api.v1.mock_tests import router as mock_tests_router
+from app.api.v1.comp_student import router as comp_student_router
 
 api_router = APIRouter()
 
@@ -66,6 +67,7 @@ api_router.include_router(admin_notifications_router, prefix="/admin/notificatio
 api_router.include_router(comp_hierarchy_router, prefix="/comp", tags=["competitive-hierarchy"])
 api_router.include_router(comp_llm_resources_router, prefix="/comp/llm", tags=["competitive-llm"])
 api_router.include_router(comp_student_content_router, prefix="/comp/student", tags=["competitive-student"])
+api_router.include_router(comp_student_router, prefix="/comp/student", tags=["competitive-student-features"])
 api_router.include_router(comp_activities_router, prefix="/comp", tags=["competitive-activities"])
 api_router.include_router(mock_tests_router, prefix="/comp", tags=["mock-tests"])
 

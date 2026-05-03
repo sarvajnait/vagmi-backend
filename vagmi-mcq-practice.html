@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=375, initial-scale=1.0">
+<title>Vagmi AI — MCQ Practice</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --purple-deep:#3B1578;
+  --purple-mid:#5E2CA5;
+  --purple-primary:#7C3AED;
+  --purple-light:#A78BFA;
+  --purple-surface:#F3EEFF;
+  --header-gradient:linear-gradient(180deg,#3B1578 0%,#5E2CA5 40%,#7C3AED 85%,#9061F0 100%);
+  --teal:#0D9488;
+  --teal-light:#CCFBF1;
+  --amber:#D97706;
+  --amber-light:#FEF3C7;
+  --green:#059669;
+  --green-light:#D1FAE5;
+  --green-dark:#047857;
+  --red:#DC2626;
+  --red-light:#FEE2E2;
+  --orange:#EA580C;
+  --orange-light:#FFF7ED;
+  --bg:#F8F7FC;
+  --surface:#FFFFFF;
+  --card-border:#EDEBF5;
+  --border:#E8E5F0;
+  --text:#1A1A2E;
+  --text2:#5A5775;
+  --text3:#9590A8;
+  --text4:#C4BDD4;
+  --shadow-card:0 2px 8px rgba(60,20,120,.06);
+}
+
+body{
+  font-family:'Nunito',system-ui,sans-serif;
+  background:#0C0B12;
+  display:flex;align-items:flex-start;justify-content:center;
+  min-height:100vh;padding:24px 16px;
+}
+
+.device{
+  width:375px;height:812px;border-radius:44px;overflow:hidden;
+  position:relative;background:var(--bg);
+  box-shadow:0 0 0 2px #1e1e30,0 0 0 5px #2c2c44,0 30px 80px rgba(0,0,0,.6);
+}
+.screen{width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden}
+
+/* Status bar */
+.sb{display:flex;justify-content:space-between;align-items:center;padding:14px 28px 0;height:48px;flex-shrink:0;background:var(--bg)}
+.sb .t{font-size:16px;font-weight:700;color:var(--text);letter-spacing:-.2px}
+.sb .ic{display:flex;gap:5px;align-items:center}
+.sb .ic svg{fill:var(--text)}
+
+/* ─── MCQ HEADER ─── */
+.mcq-header{
+  display:flex;align-items:center;gap:10px;
+  padding:4px 20px 8px;flex-shrink:0;
+}
+.back{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
+.back svg{width:18px;height:18px;fill:var(--text2)}
+.mh-info{flex:1}
+.mh-title{font-size:15px;font-weight:700;color:var(--text)}
+.mh-sub{font-size:11px;color:var(--text3);font-weight:500}
+.q-counter{padding:5px 12px;border-radius:10px;background:var(--purple-surface);font-size:12px;font-weight:800;color:var(--purple-primary);flex-shrink:0}
+
+/* Timer */
+.timer-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px 8px;flex-shrink:0;
+}
+.timer-pill{
+  display:flex;align-items:center;gap:5px;
+  padding:5px 12px;border-radius:10px;
+  font-size:13px;font-weight:700;
+}
+.timer-pill.active{background:var(--red-light);color:var(--red)}
+.timer-pill.off{background:var(--border);color:var(--text3)}
+.timer-pill svg{width:14px;height:14px}
+.timer-toggle{
+  display:flex;align-items:center;gap:6px;
+  font-size:11px;font-weight:600;color:var(--text3);
+  cursor:pointer;
+}
+.toggle-track{
+  width:36px;height:20px;border-radius:10px;
+  background:var(--border);position:relative;
+  cursor:pointer;transition:.2s;
+}
+.toggle-track.on{background:var(--purple-primary)}
+.toggle-thumb{
+  width:16px;height:16px;border-radius:50%;
+  background:#fff;position:absolute;top:2px;left:2px;
+  transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.15);
+}
+.toggle-track.on .toggle-thumb{left:18px}
+
+/* Progress segments */
+.progress-segs{display:flex;gap:3px;padding:0 20px 12px;flex-shrink:0}
+.seg{flex:1;height:4px;border-radius:2px;background:var(--border);transition:.3s}
+.seg.done-correct{background:var(--green)}
+.seg.done-wrong{background:var(--red)}
+.seg.current{background:var(--purple-primary)}
+.seg.flagged{background:var(--amber)}
+
+/* Scroll */
+.scroll{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+.scroll::-webkit-scrollbar{display:none}
+
+/* Question card */
+.q-card{
+  margin:0 20px 14px;padding:18px;
+  background:var(--surface);border:1px solid var(--card-border);
+  border-radius:16px;box-shadow:var(--shadow-card);
+}
+.q-tags{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.q-tag{padding:3px 10px;border-radius:8px;font-size:10px;font-weight:700}
+.q-text{font-size:15px;font-weight:600;color:var(--text);line-height:1.65}
+
+/* Options */
+.options{padding:0 20px;display:flex;flex-direction:column;gap:8px}
+.option{
+  padding:14px 16px;border-radius:14px;
+  border:1.5px solid var(--border);background:var(--surface);
+  display:flex;align-items:center;gap:12px;
+  cursor:pointer;transition:all .2s;
+  box-shadow:0 1px 3px rgba(0,0,0,.03);
+}
+.option:hover:not(.disabled){border-color:var(--purple-light);background:var(--purple-surface)}
+.option.selected{border-color:var(--purple-primary);background:var(--purple-surface)}
+.option.correct{border-color:var(--green);background:var(--green-light);cursor:default}
+.option.wrong{border-color:var(--red);background:var(--red-light);cursor:default}
+.option.correct-reveal{border-color:var(--green);background:var(--green-light);cursor:default}
+.option.disabled{cursor:default;opacity:.7}
+
+.o-letter{
+  width:32px;height:32px;border-radius:50%;
+  border:2px solid var(--border);background:var(--bg);
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:800;color:var(--text3);
+  flex-shrink:0;transition:.2s;
+}
+.option.selected .o-letter{background:var(--purple-primary);border-color:var(--purple-primary);color:#fff}
+.option.correct .o-letter{background:var(--green);border-color:var(--green);color:#fff}
+.option.wrong .o-letter{background:var(--red);border-color:var(--red);color:#fff}
+.option.correct-reveal .o-letter{background:var(--green);border-color:var(--green);color:#fff}
+
+.o-text{font-size:14px;font-weight:600;color:var(--text);flex:1}
+.option.correct .o-text{color:var(--green-dark)}
+.option.wrong .o-text{color:var(--red)}
+.option.correct-reveal .o-text{color:var(--green-dark)}
+
+.o-icon{font-size:16px;flex-shrink:0;display:none}
+.option.correct .o-icon,.option.correct-reveal .o-icon{display:block;color:var(--green)}
+.option.wrong .o-icon{display:block;color:var(--red)}
+
+/* Explanation */
+.explanation{
+  margin:12px 20px 0;padding:14px 16px;
+  background:var(--surface);border:1px solid var(--card-border);
+  border-radius:14px;box-shadow:var(--shadow-card);
+  display:none;
+}
+.explanation.show{display:block;animation:fadeUp .3s ease}
+.exp-label{font-size:11px;font-weight:800;color:var(--purple-primary);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;display:flex;align-items:center;gap:5px}
+.exp-text{font-size:13px;color:var(--text2);line-height:1.65;font-weight:500}
+.exp-text strong{color:var(--text);font-weight:700}
+
+/* Flag button */
+.flag-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 20px 0;
+}
+.flag-btn{
+  display:flex;align-items:center;gap:5px;
+  font-size:12px;font-weight:600;color:var(--text3);
+  cursor:pointer;padding:6px 12px;border-radius:8px;
+  border:none;background:transparent;
+  font-family:'Nunito',sans-serif;transition:.15s;
+}
+.flag-btn:hover{background:var(--amber-light);color:var(--amber)}
+.flag-btn.flagged{background:var(--amber-light);color:var(--amber)}
+.flag-btn svg{width:16px;height:16px;fill:currentColor}
+
+/* Navigation buttons */
+.nav-btns{
+  display:flex;gap:10px;padding:12px 20px 16px;
+  flex-shrink:0;
+}
+.nav-btn{
+  flex:1;height:48px;border-radius:14px;
+  font-family:'Nunito',sans-serif;font-size:14px;font-weight:700;
+  border:none;cursor:pointer;display:flex;
+  align-items:center;justify-content:center;transition:.15s;
+}
+.btn-secondary{background:var(--surface);color:var(--text2);border:1.5px solid var(--border)}
+.btn-primary{background:var(--purple-primary);color:#fff;box-shadow:0 4px 12px rgba(124,58,237,.25)}
+.btn-primary:hover{box-shadow:0 6px 16px rgba(124,58,237,.35)}
+
+/* ═══ REPORT CARD ═══ */
+.report{display:none;flex-direction:column;height:100%;overflow:hidden}
+.report.show{display:flex}
+.mcq-flow{display:flex;flex-direction:column;height:100%;overflow:hidden}
+.mcq-flow.hide{display:none}
+
+.report-scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.report-scroll::-webkit-scrollbar{display:none}
+
+.report-header{
+  text-align:center;padding:20px 20px 0;
+}
+.rh-icon{font-size:48px;margin-bottom:8px}
+.rh-title{font-size:22px;font-weight:900;color:var(--text)}
+.rh-sub{font-size:13px;color:var(--text2);font-weight:500;margin-top:2px}
+
+/* Score ring */
+.score-ring-wrap{margin:20px auto;position:relative;width:130px;height:130px}
+.score-ring-wrap svg{width:130px;height:130px;transform:rotate(-90deg)}
+.sr-bg{fill:none;stroke:var(--border);stroke-width:10}
+.sr-fill{fill:none;stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset 1.2s ease}
+.score-inner{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.si-num{font-size:36px;font-weight:900;line-height:1}
+.si-den{font-size:14px;color:var(--text3);font-weight:600;margin-top:-2px}
+.si-label{font-size:11px;font-weight:700;margin-top:4px;padding:2px 10px;border-radius:6px}
+
+/* Stats grid */
+.stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:0 20px 16px}
+.stat-card{
+  padding:14px 8px;background:var(--surface);
+  border:1px solid var(--card-border);border-radius:14px;
+  box-shadow:var(--shadow-card);text-align:center;
+}
+.sc-icon{font-size:20px;margin-bottom:4px}
+.sc-val{font-size:20px;font-weight:900;color:var(--text);line-height:1}
+.sc-label{font-size:10px;font-weight:600;color:var(--text3);margin-top:3px;text-transform:uppercase;letter-spacing:.3px}
+
+/* Question review list */
+.review-section{margin:0 20px 16px}
+.review-title{font-size:15px;font-weight:800;color:var(--text);margin-bottom:10px}
+.review-list{display:flex;flex-wrap:wrap;gap:6px}
+.review-dot{
+  width:36px;height:36px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:800;
+}
+.rd-correct{background:var(--green-light);color:var(--green)}
+.rd-wrong{background:var(--red-light);color:var(--red)}
+.rd-flagged{border:2px solid var(--amber);background:var(--amber-light);color:var(--amber)}
+
+/* Ravi card */
+.ravi-card{
+  margin:0 20px 16px;padding:16px;
+  background:var(--purple-surface);border:1px solid rgba(124,58,237,.1);
+  border-radius:16px;display:flex;gap:14px;
+}
+.ravi-av{
+  width:42px;height:42px;border-radius:50%;
+  background:linear-gradient(135deg,#60A5FA,#3B82F6);
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:16px;font-weight:800;flex-shrink:0;
+}
+.ravi-card .rc-name{font-size:14px;font-weight:700;color:var(--text);margin-bottom:2px}
+.ravi-card p{font-size:13px;color:var(--text2);line-height:1.55;font-weight:500}
+
+.report-btns{display:flex;gap:10px;padding:0 20px 20px}
+
+/* Home bar */
+.hbar{height:28px;display:flex;align-items:center;justify-content:center;background:var(--bg);flex-shrink:0}
+.hbar div{width:134px;height:5px;border-radius:3px;background:var(--text);opacity:.15}
+
+/* Animations */
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+@keyframes pop{0%{transform:scale(.95)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
+.a{animation:fadeUp .35s ease both}
+</style>
+</head>
+<body>
+
+<div class="device">
+  <div class="screen">
+
+    <!-- Status Bar -->
+    <div class="sb">
+      <span class="t">11:24</span>
+      <div class="ic">
+        <svg width="17" height="12" viewBox="0 0 17 12"><rect x="0" y="3" width="3" height="9" rx="1"/><rect x="4.5" y="2" width="3" height="10" rx="1"/><rect x="9" y="0" width="3" height="12" rx="1"/><rect x="13.5" y="1" width="3" height="11" rx="1"/></svg>
+        <svg width="27" height="13" viewBox="0 0 27 13"><rect x="0" y="0" width="22" height="13" rx="2.5" stroke="currentColor" stroke-width="1" fill="none" opacity=".35"/><rect x="2" y="2" width="18" height="9" rx="1.5"/></svg>
+      </div>
+    </div>
+
+    <!-- ═══ MCQ FLOW ═══ -->
+    <div class="mcq-flow" id="mcqFlow">
+
+      <!-- Header -->
+      <div class="mcq-header">
+        <div class="back" onclick="showReport()"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></div>
+        <div class="mh-info">
+          <div class="mh-title" id="chapterTitle">Percentage</div>
+          <div class="mh-sub">Mathematics · Basic Percentage</div>
+        </div>
+        <div class="q-counter" id="qCounter">Q 1/5</div>
+      </div>
+
+      <!-- Timer row -->
+      <div class="timer-row">
+        <div class="timer-pill off" id="timerPill">
+          <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z" fill="currentColor"/></svg>
+          <span id="timerText">Timer off</span>
+        </div>
+        <div class="timer-toggle" onclick="toggleTimer()">
+          <span>Timed</span>
+          <div class="toggle-track" id="timerToggle">
+            <div class="toggle-thumb"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress segments -->
+      <div class="progress-segs" id="progressSegs">
+        <div class="seg current"></div>
+        <div class="seg"></div>
+        <div class="seg"></div>
+        <div class="seg"></div>
+        <div class="seg"></div>
+      </div>
+
+      <!-- Scrollable question area -->
+      <div class="scroll" id="qScroll"></div>
+
+      <!-- Navigation -->
+      <div class="nav-btns" id="navBtns">
+        <button class="nav-btn btn-secondary" id="prevBtn" onclick="prevQ()" style="display:none">Back</button>
+        <button class="nav-btn btn-primary" id="nextBtn" onclick="nextQ()">Next</button>
+      </div>
+    </div>
+
+    <!-- ═══ REPORT CARD ═══ -->
+    <div class="report" id="report">
+      <div class="report-scroll" id="reportScroll"></div>
+      <div class="report-btns">
+        <button class="nav-btn btn-secondary" onclick="restartQuiz()" style="flex:1">Retry Wrong Qs</button>
+        <button class="nav-btn btn-primary" style="flex:1">Back to Chapter</button>
+      </div>
+      <div class="hbar"><div></div></div>
+    </div>
+
+    <div class="hbar" id="mcqHbar"><div></div></div>
+
+  </div>
+</div>
+
+<script>
+const questions = [
+  {
+    text: "If 40% of a number is 200, what is the number?",
+    tags: [{label:"Basic Percentage",color:"purple"},{label:"Easy",color:"green"}],
+    options: ["400","450","500","550"],
+    correct: 2,
+    explanation: "Let the number be x. 40% of x = 200 → (40/100) × x = 200 → x = 200 × 100/40 = <strong>500</strong>"
+  },
+  {
+    text: "A shopkeeper increases the price of an item from ₹800 to ₹1000. What is the percentage increase?",
+    tags: [{label:"% Change",color:"amber"},{label:"Medium",color:"amber"},{label:"🔥 High PYQ",color:"orange"}],
+    options: ["20%","25%","30%","15%"],
+    correct: 1,
+    explanation: "% Increase = [(1000 − 800) / 800] × 100 = (200/800) × 100 = <strong>25%</strong>"
+  },
+  {
+    text: "If a number is first increased by 20% and then decreased by 20%, the net change is:",
+    tags: [{label:"Successive %",color:"red"},{label:"Hard",color:"red"},{label:"🔥 High PYQ",color:"orange"}],
+    options: ["No change","4% decrease","4% increase","2% decrease"],
+    correct: 1,
+    explanation: "Using the successive formula: net = 20 + (−20) + (20 × −20)/100 = 0 − 4 = <strong>−4%</strong> (decrease). Shortcut: x² / 100 = 400/100 = 4% decrease."
+  },
+  {
+    text: "30% of 600 + 20% of 450 = ?",
+    tags: [{label:"Basic Percentage",color:"purple"},{label:"Easy",color:"green"}],
+    options: ["250","260","270","280"],
+    correct: 2,
+    explanation: "30% of 600 = 180. 20% of 450 = 90. Total = 180 + 90 = <strong>270</strong>"
+  },
+  {
+    text: "Population of a town increases by 10% in the first year and 20% in the second year. If current population is 13,200, what was the original?",
+    tags: [{label:"Successive %",color:"red"},{label:"Hard",color:"red"}],
+    options: ["9,000","10,000","11,000","12,000"],
+    correct: 1,
+    explanation: "Let original = x. After 10% increase: 1.1x. After 20% increase: 1.1x × 1.2 = 1.32x. So 1.32x = 13,200 → x = <strong>10,000</strong>"
+  }
+];
+
+let currentQ = 0;
+let answers = new Array(questions.length).fill(null);
+let flagged = new Set();
+let timerOn = false;
+let timerInterval = null;
+let totalSeconds = 0;
+let qStartTimes = [];
+let qTimes = new Array(questions.length).fill(0);
+
+function getTagStyle(color) {
+  const map = {
+    purple: `background:var(--purple-surface);color:var(--purple-primary)`,
+    green: `background:var(--green-light);color:var(--green)`,
+    amber: `background:var(--amber-light);color:var(--amber)`,
+    red: `background:var(--red-light);color:var(--red)`,
+    orange: `background:var(--orange-light);color:var(--orange)`
+  };
+  return map[color] || map.purple;
+}
+
+function renderQuestion() {
+  const q = questions[currentQ];
+  const answered = answers[currentQ] !== null;
+  const isFlagged = flagged.has(currentQ);
+
+  document.getElementById('qCounter').textContent = `Q ${currentQ + 1}/${questions.length}`;
+
+  // Update progress segments
+  const segs = document.getElementById('progressSegs');
+  segs.innerHTML = questions.map((_, i) => {
+    let cls = 'seg';
+    if (i === currentQ) cls += ' current';
+    else if (answers[i] !== null) cls += answers[i] === questions[i].correct ? ' done-correct' : ' done-wrong';
+    if (flagged.has(i) && answers[i] === null) cls += ' flagged';
+    return `<div class="${cls}"></div>`;
+  }).join('');
+
+  // Question content
+  const scroll = document.getElementById('qScroll');
+  let html = `
+    <div class="q-card a">
+      <div class="q-tags">${q.tags.map(t => `<span class="q-tag" style="${getTagStyle(t.color)}">${t.label}</span>`).join('')}</div>
+      <div class="q-text">${q.text}</div>
+    </div>
+    <div class="options" id="optionsList">
+  `;
+
+  const letters = ['A','B','C','D'];
+  q.options.forEach((opt, i) => {
+    let cls = 'option';
+    let icon = '';
+    if (answered) {
+      cls += ' disabled';
+      if (i === q.correct && answers[currentQ] === i) { cls = 'option correct'; icon = '✓'; }
+      else if (i === q.correct) { cls = 'option correct-reveal'; icon = '✓'; }
+      else if (i === answers[currentQ]) { cls = 'option wrong'; icon = '✗'; }
+      else { cls = 'option disabled'; }
+    }
+    html += `
+      <div class="${cls}" onclick="selectOption(${i})" data-idx="${i}">
+        <span class="o-letter">${letters[i]}</span>
+        <span class="o-text">${opt}</span>
+        <span class="o-icon">${icon}</span>
+      </div>
+    `;
+  });
+  html += `</div>`;
+
+  // Explanation
+  if (answered) {
+    const isCorrect = answers[currentQ] === q.correct;
+    html += `
+      <div class="explanation show">
+        <div class="exp-label">${isCorrect ? '✅' : '💡'} Explanation</div>
+        <div class="exp-text">${q.explanation}</div>
+      </div>
+    `;
+  }
+
+  // Flag button
+  html += `
+    <div class="flag-row">
+      <button class="flag-btn ${isFlagged ? 'flagged' : ''}" onclick="toggleFlag()">
+        <svg viewBox="0 0 24 24"><path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6h-5.6z"/></svg>
+        ${isFlagged ? 'Flagged for review' : 'Flag for review'}
+      </button>
+    </div>
+  `;
+
+  scroll.innerHTML = html;
+  scroll.scrollTop = 0;
+
+  // Nav buttons
+  document.getElementById('prevBtn').style.display = currentQ > 0 ? 'flex' : 'none';
+  const nextBtn = document.getElementById('nextBtn');
+  if (currentQ === questions.length - 1 && answered) {
+    nextBtn.textContent = 'Finish';
+    nextBtn.onclick = () => showReport();
+  } else {
+    nextBtn.textContent = answered ? 'Next' : 'Skip';
+    nextBtn.onclick = () => nextQ();
+  }
+
+  qStartTimes[currentQ] = Date.now();
+}
+
+function selectOption(idx) {
+  if (answers[currentQ] !== null) return;
+  answers[currentQ] = idx;
+  if (qStartTimes[currentQ]) {
+    qTimes[currentQ] = Math.round((Date.now() - qStartTimes[currentQ]) / 1000);
+  }
+  renderQuestion();
+
+  // Animate
+  const opts = document.querySelectorAll('.option');
+  opts.forEach(o => {
+    const i = parseInt(o.dataset.idx);
+    if (i === idx && i !== questions[currentQ].correct) {
+      o.style.animation = 'shake .3s ease';
+    }
+    if (i === questions[currentQ].correct) {
+      o.style.animation = 'pop .3s ease';
+    }
+  });
+}
+
+function nextQ() {
+  if (qStartTimes[currentQ] && answers[currentQ] === null) {
+    qTimes[currentQ] = Math.round((Date.now() - qStartTimes[currentQ]) / 1000);
+  }
+  if (currentQ < questions.length - 1) { currentQ++; renderQuestion(); }
+}
+
+function prevQ() {
+  if (currentQ > 0) { currentQ--; renderQuestion(); }
+}
+
+function toggleFlag() {
+  if (flagged.has(currentQ)) flagged.delete(currentQ);
+  else flagged.add(currentQ);
+  renderQuestion();
+}
+
+function toggleTimer() {
+  timerOn = !timerOn;
+  const track = document.getElementById('timerToggle');
+  const pill = document.getElementById('timerPill');
+  track.classList.toggle('on', timerOn);
+  if (timerOn) {
+    pill.classList.remove('off');
+    pill.classList.add('active');
+    timerInterval = setInterval(() => {
+      totalSeconds++;
+      const m = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+      const s = (totalSeconds % 60).toString().padStart(2, '0');
+      document.getElementById('timerText').textContent = m + ':' + s;
+    }, 1000);
+  } else {
+    pill.classList.remove('active');
+    pill.classList.add('off');
+    document.getElementById('timerText').textContent = 'Timer off';
+    clearInterval(timerInterval);
+  }
+}
+
+function showReport() {
+  clearInterval(timerInterval);
+  document.getElementById('mcqFlow').classList.add('hide');
+  document.getElementById('mcqHbar').style.display = 'none';
+  document.getElementById('report').classList.add('show');
+
+  const correct = answers.filter((a, i) => a === questions[i].correct).length;
+  const wrong = answers.filter((a, i) => a !== null && a !== questions[i].correct).length;
+  const skipped = answers.filter(a => a === null).length;
+  const total = questions.length;
+  const accuracy = total > 0 ? Math.round((correct / (correct + wrong || 1)) * 100) : 0;
+  const totalTime = qTimes.reduce((a, b) => a + b, 0) || totalSeconds;
+  const mins = Math.floor(totalTime / 60);
+  const secs = totalTime % 60;
+
+  const circumference = 2 * Math.PI * 52;
+  const offset = circumference - (accuracy / 100) * circumference;
+  const ringColor = accuracy >= 75 ? 'var(--green)' : accuracy >= 50 ? 'var(--amber)' : 'var(--red)';
+  const labelBg = accuracy >= 75 ? 'var(--green-light)' : accuracy >= 50 ? 'var(--amber-light)' : 'var(--red-light)';
+  const labelColor = accuracy >= 75 ? 'var(--green)' : accuracy >= 50 ? 'var(--amber)' : 'var(--red)';
+  const labelText = accuracy >= 75 ? 'Great!' : accuracy >= 50 ? 'Good effort' : 'Needs practice';
+
+  const emoji = accuracy >= 75 ? '🎉' : accuracy >= 50 ? '👍' : '💪';
+  const raviMsg = accuracy >= 75
+    ? `Excellent work! ${correct} out of ${total} correct. You're really getting the hang of Percentage. Keep this up!`
+    : accuracy >= 50
+    ? `Good effort! You got ${correct} right. Focus on Successive Percentage — that's where you can improve the most.`
+    : `Don't worry, practice makes perfect! Review the explanations for the wrong answers and try again. I'm here to help!`;
+
+  let reviewDots = '';
+  answers.forEach((a, i) => {
+    const isCorrect = a === questions[i].correct;
+    const isFlagged = flagged.has(i);
+    let cls = 'review-dot ';
+    if (a === null) cls += 'rd-wrong';
+    else if (isCorrect && isFlagged) cls += 'rd-flagged';
+    else if (isCorrect) cls += 'rd-correct';
+    else cls += 'rd-wrong';
+    reviewDots += `<div class="${cls}">${i + 1}</div>`;
+  });
+
+  document.getElementById('reportScroll').innerHTML = `
+    <div class="report-header a">
+      <div class="rh-icon">${emoji}</div>
+      <div class="rh-title">Practice Complete!</div>
+      <div class="rh-sub">Percentage · Basic Percentage</div>
+    </div>
+
+    <div class="score-ring-wrap a" style="animation-delay:.1s">
+      <svg viewBox="0 0 130 130">
+        <circle class="sr-bg" cx="65" cy="65" r="52"/>
+        <circle class="sr-fill" cx="65" cy="65" r="52"
+          stroke="${ringColor}"
+          stroke-dasharray="${circumference}"
+          stroke-dashoffset="${offset}"/>
+      </svg>
+      <div class="score-inner">
+        <div class="si-num" style="color:${labelColor}">${correct}/${total}</div>
+        <div class="si-den">correct</div>
+        <div class="si-label" style="background:${labelBg};color:${labelColor}">${labelText}</div>
+      </div>
+    </div>
+
+    <div class="stats-grid a" style="animation-delay:.15s">
+      <div class="stat-card">
+        <div class="sc-icon">🎯</div>
+        <div class="sc-val">${accuracy}%</div>
+        <div class="sc-label">Accuracy</div>
+      </div>
+      <div class="stat-card">
+        <div class="sc-icon">✅</div>
+        <div class="sc-val" style="color:var(--green)">${correct}</div>
+        <div class="sc-label">Correct</div>
+      </div>
+      <div class="stat-card">
+        <div class="sc-icon">❌</div>
+        <div class="sc-val" style="color:var(--red)">${wrong}</div>
+        <div class="sc-label">Wrong</div>
+      </div>
+    </div>
+
+    <div class="stats-grid a" style="animation-delay:.2s">
+      <div class="stat-card">
+        <div class="sc-icon">⏱</div>
+        <div class="sc-val">${mins}:${secs.toString().padStart(2,'0')}</div>
+        <div class="sc-label">Time Taken</div>
+      </div>
+      <div class="stat-card">
+        <div class="sc-icon">⏭</div>
+        <div class="sc-val">${skipped}</div>
+        <div class="sc-label">Skipped</div>
+      </div>
+      <div class="stat-card">
+        <div class="sc-icon">🚩</div>
+        <div class="sc-val">${flagged.size}</div>
+        <div class="sc-label">Flagged</div>
+      </div>
+    </div>
+
+    <div class="review-section a" style="animation-delay:.25s">
+      <div class="review-title">Question Review</div>
+      <div class="review-list">${reviewDots}</div>
+    </div>
+
+    <div class="ravi-card a" style="animation-delay:.3s">
+      <div class="ravi-av">R</div>
+      <div>
+        <div class="rc-name">Ravi says:</div>
+        <p>${raviMsg}</p>
+      </div>
+    </div>
+  `;
+}
+
+function restartQuiz() {
+  answers = new Array(questions.length).fill(null);
+  flagged.clear();
+  currentQ = 0;
+  totalSeconds = 0;
+  qTimes = new Array(questions.length).fill(0);
+  document.getElementById('report').classList.remove('show');
+  document.getElementById('mcqFlow').classList.remove('hide');
+  document.getElementById('mcqHbar').style.display = '';
+  if (timerOn) {
+    timerInterval = setInterval(() => {
+      totalSeconds++;
+      const m = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+      const s = (totalSeconds % 60).toString().padStart(2, '0');
+      document.getElementById('timerText').textContent = m + ':' + s;
+    }, 1000);
+  }
+  renderQuestion();
+}
+
+// Init
+renderQuestion();
+</script>
+</body>
+</html>

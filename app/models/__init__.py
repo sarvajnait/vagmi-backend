@@ -15,3 +15,7 @@ from .comp_student_content import *
 from .comp_activities import *
 from .comp_artifacts import *
 from .mock_tests import *
+from .comp_streak import UserStreak, UserStreakDay, UserMilestone  # noqa: F401
+from .comp_wrong_answers import WrongAnswerEntry  # noqa: F401
+from .comp_study_time import StudyTimeLog  # noqa: F401
+from .user_notifications import UserNotification  # noqa: F401

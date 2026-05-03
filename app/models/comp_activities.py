@@ -115,6 +115,10 @@ class CompActivityPlaySession(BaseModel, table=True):
         default=None,
         sa_column=Column(Integer, ForeignKey("comp_sub_chapters.id", ondelete="CASCADE"), nullable=True, index=True),
     )
+    activity_group_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("comp_activity_groups.id", ondelete="SET NULL"), nullable=True, index=True),
+    )
     status: str = Field(default="in_progress", max_length=20)
     total_questions: int = Field(default=0)
     correct_count: int = Field(default=0)

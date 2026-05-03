@@ -21,6 +21,10 @@ from app.models.comp_activities import (
 from app.models.user import User
 from app.models.admin import Admin
 from app.services.activity_jobs import enqueue_activity_job
+from app.services.comp_streak_service import record_activity as record_streak_activity
+from app.services.comp_wrong_answer_service import process_session_answers
+from app.services.notification_service import notify_wrong_answer_reminder, notify_chapter_complete
+from app.models.comp_wrong_answers import WrongAnswerEntry
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do
 
@@ -1070,6 +1074,7 @@ async def publish_comp_activities(
 class CompSessionCreate(BaseModel):
     comp_chapter_id: Optional[int] = None
     sub_chapter_id: Optional[int] = None
+    activity_group_id: Optional[int] = None
 
 
 class CompAnswerSubmit(BaseModel):
@@ -1115,6 +1120,48 @@ async def create_comp_session(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    # Activity-group-scoped session: questions from one specific group
+    if payload.activity_group_id is not None:
+        group = await session.get(CompActivityGroup, payload.activity_group_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="Activity group not found")
+
+        _count_result = await session.exec(
+            select(func.count()).where(
+                CompChapterActivity.activity_group_id == payload.activity_group_id,
+                CompChapterActivity.is_published == True,
+            )
+        )
+        total_questions = _count_result.first()
+        if isinstance(total_questions, tuple):
+            total_questions = total_questions[0]
+        if total_questions == 0:
+            raise HTTPException(status_code=404, detail="No activities found in this group")
+
+        play_session = CompActivityPlaySession(
+            user_id=current_user.id,
+            comp_chapter_id=group.comp_chapter_id,
+            sub_chapter_id=group.sub_chapter_id,
+            activity_group_id=payload.activity_group_id,
+            total_questions=total_questions,
+        )
+        session.add(play_session)
+        await session.commit()
+        await session.refresh(play_session)
+
+        _result = await session.exec(
+            select(CompChapterActivity)
+            .where(
+                CompChapterActivity.activity_group_id == payload.activity_group_id,
+                CompChapterActivity.is_published == True,
+            )
+            .order_by(*sort_ordering(CompChapterActivity))
+            .limit(1)
+        )
+        first_activity = _result.first()
+        return {"data": {"session": play_session.dict(), "next_activity": first_activity.dict() if first_activity else None}}
+
+    # Chapter / sub-chapter scoped session (existing behaviour)
     comp_chapter_id, sub_chapter_id = _resolve_fk(payload.comp_chapter_id, payload.sub_chapter_id)
     filter_col = CompChapterActivity.comp_chapter_id if comp_chapter_id else CompChapterActivity.sub_chapter_id
     filter_val = comp_chapter_id or sub_chapter_id
@@ -1213,14 +1260,72 @@ async def submit_comp_answer(
         await session.commit()
         await session.refresh(play_session)
 
+    # Snapshot before any further commits expire the ORM object
+    session_snapshot = play_session.dict()
+    ps_chapter_id = play_session.comp_chapter_id
+    ps_sub_chapter_id = play_session.sub_chapter_id
+
+    if completed:
+        try:
+            await process_session_answers(session_id, current_user.id, session)
+            await record_streak_activity(current_user.id, session)
+
+            # Wrong-answer reminder if count >= 5
+            _wcount_result = await session.exec(
+                select(func.count(WrongAnswerEntry.id)).where(
+                    WrongAnswerEntry.user_id == current_user.id,
+                    WrongAnswerEntry.is_mastered == False,
+                )
+            )
+            wrong_count = _wcount_result.first() or 0
+            if isinstance(wrong_count, tuple):
+                wrong_count = wrong_count[0]
+            if wrong_count >= 5:
+                await notify_wrong_answer_reminder(current_user.id, int(wrong_count), session)
+
+            # Chapter complete notification if no unanswered questions remain in chapter
+            if ps_chapter_id:
+                _unanswered_result = await session.exec(
+                    select(func.count(CompChapterActivity.id))
+                    .where(
+                        CompChapterActivity.comp_chapter_id == ps_chapter_id,
+                        CompChapterActivity.is_published == True,
+                        ~CompChapterActivity.id.in_(
+                            select(CompActivityAnswer.activity_id)
+                            .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
+                            .where(CompActivityPlaySession.user_id == current_user.id)
+                        ),
+                    )
+                )
+                unanswered = _unanswered_result.first() or 0
+                if isinstance(unanswered, tuple):
+                    unanswered = unanswered[0]
+                if unanswered == 0:
+                    from app.models.competitive_hierarchy import CompChapter
+                    chapter_obj = await session.get(CompChapter, ps_chapter_id)
+                    if chapter_obj:
+                        accuracy = round(session_snapshot["correct_count"] / session_snapshot["total_questions"] * 100) if session_snapshot["total_questions"] else 0
+                        await notify_chapter_complete(current_user.id, chapter_obj.name, accuracy, session)
+
+            await session.commit()
+        except Exception:
+            pass
+
     _answered_ids = await session.exec(
         select(CompActivityAnswer.activity_id).where(CompActivityAnswer.session_id == session_id)
     )
     answered_ids = [row[0] if isinstance(row, tuple) else row for row in _answered_ids.all()]
 
-    filter_col = CompChapterActivity.comp_chapter_id if play_session.comp_chapter_id else CompChapterActivity.sub_chapter_id
-    filter_val = play_session.comp_chapter_id or play_session.sub_chapter_id
-    next_query = select(CompChapterActivity).where(filter_col == filter_val, CompChapterActivity.is_published == True)
+    ps_activity_group_id = session_snapshot.get("activity_group_id")
+    if ps_activity_group_id:
+        next_query = select(CompChapterActivity).where(
+            CompChapterActivity.activity_group_id == ps_activity_group_id,
+            CompChapterActivity.is_published == True,
+        )
+    else:
+        filter_col = CompChapterActivity.comp_chapter_id if ps_chapter_id else CompChapterActivity.sub_chapter_id
+        filter_val = ps_chapter_id or ps_sub_chapter_id
+        next_query = select(CompChapterActivity).where(filter_col == filter_val, CompChapterActivity.is_published == True)
     if answered_ids:
         next_query = next_query.where(~CompChapterActivity.id.in_(answered_ids))
     next_query = next_query.order_by(*sort_ordering(CompChapterActivity)).limit(1)
@@ -1244,7 +1349,7 @@ async def submit_comp_answer(
         "answer_image_url": activity.answer_image_url,
         "next_activity": next_activity.dict() if next_activity else None,
         "completed": completed,
-        "session": play_session.dict(),
+        "session": session_snapshot,
     }}
 
 
@@ -1288,4 +1393,14 @@ async def get_comp_session_report(
             "score": answer.score,
         })
 
-    return {"data": {"session": play_session.dict(), "answers": answers}}
+    duration_seconds = None
+    if play_session.completed_at and play_session.started_at:
+        duration_seconds = int((play_session.completed_at - play_session.started_at).total_seconds())
+
+    skipped_count = play_session.total_questions - len(answers)
+
+    session_data = play_session.dict()
+    session_data["duration_seconds"] = duration_seconds
+    session_data["skipped_count"] = max(skipped_count, 0)
+
+    return {"data": {"session": session_data, "answers": answers}}

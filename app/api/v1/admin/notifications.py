@@ -11,6 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.api.v1.admin.auth import get_current_user
 from app.models import User
 from app.models.notifications import Notification
+from app.models.user_notifications import UserNotification
 from app.services.database import get_session
 from app.services.fcm_service import send_multicast
 
@@ -38,24 +39,26 @@ async def send_notification(
     Optionally filter by class_level_id, board_id, medium_id.
     Omitting all filters sends to every user who has a token.
     """
-    # Build filter list
-    filters = [User.fcm_token.is_not(None)]
+    # Build filter list — for tokens (must have fcm_token) and for inbox fan-out (all matching users)
+    base_filters = []
     if body.class_level_id is not None:
-        filters.append(User.class_level_id == body.class_level_id)
+        base_filters.append(User.class_level_id == body.class_level_id)
     if body.board_id is not None:
-        filters.append(User.board_id == body.board_id)
+        base_filters.append(User.board_id == body.board_id)
     if body.medium_id is not None:
-        filters.append(User.medium_id == body.medium_id)
+        base_filters.append(User.medium_id == body.medium_id)
 
-    result = await session.exec(select(User.fcm_token).where(*filters))
-    tokens = [t for t in result.all() if t]
+    token_result = await session.exec(
+        select(User.fcm_token).where(User.fcm_token.is_not(None), *base_filters)
+    )
+    tokens = [t for t in token_result.all() if t]
 
     if not tokens:
         raise HTTPException(status_code=404, detail="No users with FCM tokens found for the given filters")
 
     sent_count = send_multicast(tokens, title=body.title, body=body.body)
 
-    # Persist notification record
+    # Persist broadcast log
     notification = Notification(
         title=body.title,
         body=body.body,
@@ -66,6 +69,20 @@ async def send_notification(
         sent_at=datetime.now(tz=timezone.utc),
     )
     session.add(notification)
+
+    # Fan-out: write UserNotification inbox row for every targeted user
+    user_ids_result = await session.exec(
+        select(User.id).where(*base_filters) if base_filters else select(User.id)
+    )
+    for uid in user_ids_result.all():
+        session.add(UserNotification(
+            user_id=uid,
+            title=body.title,
+            body=body.body,
+            notif_type="admin_broadcast",
+            icon_emoji="📢",
+        ))
+
     await session.commit()
 
     return {

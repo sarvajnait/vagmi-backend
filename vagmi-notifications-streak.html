@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=375, initial-scale=1.0">
+<title>Vagmi AI — Notifications & Streak</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --purple-deep:#3B1578;
+  --purple-mid:#5E2CA5;
+  --purple-primary:#7C3AED;
+  --purple-light:#A78BFA;
+  --purple-surface:#F3EEFF;
+  --header-gradient:linear-gradient(180deg,#3B1578 0%,#5E2CA5 40%,#7C3AED 85%,#9061F0 100%);
+  --teal:#0D9488;
+  --teal-light:#CCFBF1;
+  --amber:#D97706;
+  --amber-light:#FEF3C7;
+  --green:#059669;
+  --green-light:#D1FAE5;
+  --red:#DC2626;
+  --red-light:#FEE2E2;
+  --orange:#EA580C;
+  --orange-light:#FFF7ED;
+  --blue:#3B82F6;
+  --blue-light:#DBEAFE;
+  --bg:#F8F7FC;
+  --surface:#FFFFFF;
+  --card-border:#EDEBF5;
+  --border:#E8E5F0;
+  --text:#1A1A2E;
+  --text2:#5A5775;
+  --text3:#9590A8;
+  --text4:#C4BDD4;
+  --shadow-card:0 2px 8px rgba(60,20,120,.06);
+}
+
+body{
+  font-family:'Nunito',system-ui,sans-serif;
+  background:#0C0B12;
+  display:flex;flex-direction:column;align-items:center;
+  min-height:100vh;padding:16px 8px;
+}
+
+.screen-nav{display:flex;gap:8px;margin-bottom:20px}
+.screen-nav button{
+  font-family:'Nunito',sans-serif;font-size:12px;font-weight:700;
+  padding:8px 20px;border-radius:24px;
+  border:1px solid rgba(255,255,255,.15);
+  background:rgba(255,255,255,.06);color:rgba(255,255,255,.6);
+  cursor:pointer;transition:.15s;
+}
+.screen-nav button:hover{background:rgba(124,58,237,.25)}
+.screen-nav button.on{background:var(--purple-primary);color:#fff;border-color:var(--purple-primary)}
+
+.device{
+  width:375px;height:812px;border-radius:44px;overflow:hidden;
+  position:relative;background:var(--bg);
+  box-shadow:0 0 0 2px #1e1e30,0 0 0 5px #2c2c44,0 30px 80px rgba(0,0,0,.6);
+}
+.s{width:100%;height:100%;position:absolute;top:0;left:0;display:none;flex-direction:column;overflow:hidden;background:var(--bg)}
+.s.on{display:flex}
+
+/* Status bar */
+.sb{display:flex;justify-content:space-between;align-items:center;padding:14px 28px 0;height:48px;flex-shrink:0;background:var(--purple-deep)}
+.sb .t{font-size:16px;font-weight:700;color:#fff;letter-spacing:-.2px}
+.sb .ic{display:flex;gap:5px;align-items:center}
+
+/* Header */
+.header{background:var(--header-gradient);padding:8px 20px 0;position:relative;flex-shrink:0}
+.header::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:24px;background:var(--bg);border-radius:24px 24px 0 0}
+.hdr-row{display:flex;align-items:center;justify-content:space-between;position:relative;z-index:2;margin-bottom:16px}
+.hdr-left{display:flex;align-items:center;gap:12px}
+.back{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.back svg{width:18px;height:18px;fill:#fff}
+.hdr-title{font-size:20px;font-weight:800;color:#fff;letter-spacing:-.3px}
+.hdr-link{font-size:12px;font-weight:700;color:rgba(255,255,255,.65);cursor:pointer}
+
+.scroll{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+.scroll::-webkit-scrollbar{display:none}
+
+.hbar{height:28px;display:flex;align-items:center;justify-content:center;background:var(--bg);flex-shrink:0}
+.hbar div{width:134px;height:5px;border-radius:3px;background:var(--text);opacity:.15}
+
+/* ═══════════════════════════════
+   NOTIFICATIONS
+   ═══════════════════════════════ */
+
+.notif-group-label{
+  font-size:12px;font-weight:800;color:var(--text3);
+  text-transform:uppercase;letter-spacing:.8px;
+  padding:6px 20px 8px;
+}
+
+.notif-card{
+  margin:0 20px 8px;padding:14px 16px;
+  background:var(--surface);border:1px solid var(--card-border);
+  border-radius:14px;box-shadow:var(--shadow-card);
+  display:flex;align-items:flex-start;gap:12px;
+  cursor:pointer;transition:.15s;position:relative;
+}
+.notif-card:hover{box-shadow:0 4px 12px rgba(60,20,120,.1)}
+.notif-card.unread{border-left:3px solid var(--purple-primary)}
+.notif-card.unread::after{
+  content:'';position:absolute;top:16px;right:16px;
+  width:8px;height:8px;border-radius:50%;background:var(--purple-primary);
+}
+
+.n-icon{
+  width:38px;height:38px;border-radius:11px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:17px;flex-shrink:0;
+}
+.n-body{flex:1;min-width:0}
+.n-title{font-size:13.5px;font-weight:700;color:var(--text);line-height:1.35}
+.n-desc{font-size:12px;color:var(--text2);margin-top:2px;line-height:1.45;font-weight:500}
+.n-time{font-size:11px;color:var(--text3);margin-top:4px;font-weight:500}
+
+/* Empty state */
+.empty-state{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:60px 40px;text-align:center;
+}
+.empty-state .e-icon{font-size:48px;margin-bottom:16px}
+.empty-state .e-title{font-size:16px;font-weight:700;color:var(--text)}
+.empty-state .e-sub{font-size:13px;color:var(--text3);margin-top:6px;font-weight:500;line-height:1.5}
+
+/* ═══════════════════════════════
+   STREAK PAGE
+   ═══════════════════════════════ */
+
+/* Streak hero in header */
+.streak-hero{
+  text-align:center;padding:0 20px 24px;
+  position:relative;z-index:2;
+}
+.sh-fire{font-size:44px;line-height:1;display:block}
+.sh-count{font-size:48px;font-weight:900;color:#fff;line-height:1;margin-top:4px;letter-spacing:-1px}
+.sh-label{font-size:14px;font-weight:600;color:rgba(255,255,255,.6);margin-top:4px}
+.sh-sub{font-size:12px;color:rgba(255,255,255,.45);margin-top:2px;font-weight:500}
+
+/* Stats row */
+.streak-stats{
+  display:flex;gap:10px;margin:4px 20px 16px;
+}
+.ss-card{
+  flex:1;padding:14px;background:var(--surface);
+  border:1px solid var(--card-border);border-radius:14px;
+  box-shadow:var(--shadow-card);text-align:center;
+}
+.ss-val{font-size:20px;font-weight:900;color:var(--text);line-height:1}
+.ss-label{font-size:10px;font-weight:600;color:var(--text3);margin-top:4px;text-transform:uppercase;letter-spacing:.3px}
+
+/* Calendar */
+.cal-card{
+  margin:0 20px 14px;padding:18px;
+  background:var(--surface);border:1px solid var(--card-border);
+  border-radius:18px;box-shadow:var(--shadow-card);
+}
+.cal-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:16px;
+}
+.cal-month{font-size:16px;font-weight:800;color:var(--text)}
+.cal-arrows{display:flex;gap:8px}
+.cal-arrow{
+  width:30px;height:30px;border-radius:8px;
+  background:var(--bg);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;font-size:14px;color:var(--text2);
+}
+.cal-weekdays{
+  display:grid;grid-template-columns:repeat(7,1fr);
+  gap:0;margin-bottom:8px;
+}
+.cal-weekdays span{
+  text-align:center;font-size:10px;font-weight:700;
+  color:var(--text3);text-transform:uppercase;
+  padding:4px 0;
+}
+.cal-grid{
+  display:grid;grid-template-columns:repeat(7,1fr);
+  gap:4px;
+}
+.cal-day{
+  aspect-ratio:1;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:600;color:var(--text2);
+  position:relative;
+}
+.cal-day.empty{visibility:hidden}
+.cal-day.active{
+  background:var(--green);color:#fff;
+  box-shadow:0 2px 6px rgba(5,150,105,.2);
+}
+.cal-day.active::after{
+  content:'🔥';position:absolute;top:-2px;right:-3px;
+  font-size:8px;line-height:1;
+}
+.cal-day.missed{
+  background:var(--border);color:var(--text3);
+}
+.cal-day.today{
+  background:var(--purple-primary);color:#fff;
+  box-shadow:0 2px 8px rgba(124,58,237,.3);
+  font-weight:800;
+}
+.cal-day.today::after{content:none}
+.cal-day.future{color:var(--text4)}
+
+/* Freeze card */
+.freeze-card{
+  margin:0 20px 14px;padding:14px 16px;
+  background:var(--surface);border:1px solid var(--card-border);
+  border-radius:14px;box-shadow:var(--shadow-card);
+  display:flex;align-items:center;gap:14px;
+}
+.freeze-icon{
+  width:42px;height:42px;border-radius:12px;
+  background:var(--blue-light);
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;flex-shrink:0;
+}
+.freeze-info{flex:1}
+.freeze-title{font-size:14px;font-weight:700;color:var(--text)}
+.freeze-sub{font-size:12px;color:var(--text3);margin-top:1px;font-weight:500}
+.freeze-btn{
+  padding:7px 14px;border-radius:10px;
+  background:var(--blue-light);color:var(--blue);
+  font-family:'Nunito',sans-serif;font-size:12px;font-weight:700;
+  border:none;cursor:pointer;
+}
+
+/* Milestones */
+.milestones-title{
+  font-size:16px;font-weight:800;color:var(--text);
+  padding:6px 20px 12px;
+}
+.milestones{
+  display:flex;gap:10px;padding:0 20px 16px;
+  overflow-x:auto;-webkit-overflow-scrolling:touch;
+}
+.milestones::-webkit-scrollbar{display:none}
+.milestone{
+  min-width:80px;padding:14px 12px;
+  background:var(--surface);border:1px solid var(--card-border);
+  border-radius:16px;box-shadow:var(--shadow-card);
+  text-align:center;flex-shrink:0;
+}
+.milestone.unlocked{border-color:var(--amber);background:var(--amber-light)}
+.milestone.current{border:2px dashed var(--purple-light);background:var(--purple-surface)}
+.ms-icon{font-size:24px;line-height:1}
+.ms-days{font-size:14px;font-weight:900;color:var(--text);margin-top:6px}
+.ms-label{font-size:10px;font-weight:600;color:var(--text3);margin-top:2px}
+.milestone.unlocked .ms-label{color:var(--amber)}
+.milestone.current .ms-label{color:var(--purple-primary)}
+.milestone.locked{opacity:.45}
+.milestone.locked .ms-icon{filter:grayscale(1)}
+
+/* Ravi card */
+.ravi-card{
+  margin:0 20px 20px;padding:16px;
+  background:var(--purple-surface);border:1px solid rgba(124,58,237,.1);
+  border-radius:16px;display:flex;gap:14px;
+}
+.ravi-av{
+  width:42px;height:42px;border-radius:50%;
+  background:linear-gradient(135deg,#60A5FA,#3B82F6);
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:16px;font-weight:800;flex-shrink:0;
+}
+.ravi-card .rc-name{font-size:14px;font-weight:700;color:var(--text);margin-bottom:2px}
+.ravi-card p{font-size:13px;color:var(--text2);line-height:1.55;font-weight:500}
+
+/* Animations */
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.a{animation:fadeUp .4s ease both}
+.a1{animation-delay:.05s}.a2{animation-delay:.1s}.a3{animation-delay:.15s}
+.a4{animation-delay:.2s}.a5{animation-delay:.25s}.a6{animation-delay:.3s}
+.a7{animation-delay:.35s}.a8{animation-delay:.4s}.a9{animation-delay:.45s}
+</style>
+</head>
+<body>
+
+<div class="screen-nav" id="nav"></div>
+
+<div class="device">
+
+<!-- ═══════════════════════════════
+     1. NOTIFICATIONS
+     ═══════════════════════════════ -->
+<div class="s on" id="s0">
+  <div class="sb"><span class="t">9:41</span><div class="ic"><svg width="17" height="12" viewBox="0 0 17 12" fill="white"><rect x="0" y="3" width="3" height="9" rx="1"/><rect x="4.5" y="2" width="3" height="10" rx="1"/><rect x="9" y="0" width="3" height="12" rx="1"/><rect x="13.5" y="1" width="3" height="11" rx="1"/></svg><svg width="27" height="13" viewBox="0 0 27 13"><rect x="0" y="0" width="22" height="13" rx="2.5" stroke="white" stroke-width="1" fill="none" opacity=".4"/><rect x="2" y="2" width="18" height="9" rx="1.5" fill="white"/></svg></div></div>
+
+  <div class="header">
+    <div class="hdr-row a a1">
+      <div class="hdr-left">
+        <div class="back"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></div>
+        <span class="hdr-title">Notifications</span>
+      </div>
+      <span class="hdr-link">Mark all read</span>
+    </div>
+  </div>
+
+  <div class="scroll">
+
+    <!-- Today -->
+    <div class="notif-group-label a a2">Today</div>
+
+    <div class="notif-card unread a a2">
+      <div class="n-icon" style="background:var(--amber-light)">🔥</div>
+      <div class="n-body">
+        <div class="n-title">Don't break your streak!</div>
+        <div class="n-desc">You're on a 23-day streak. Complete today's plan to keep it going.</div>
+        <div class="n-time">30 min ago</div>
+      </div>
+    </div>
+
+    <div class="notif-card unread a a3">
+      <div class="n-icon" style="background:var(--purple-surface)">🤖</div>
+      <div class="n-body">
+        <div class="n-title">Ravi: Blood Relations tips ready</div>
+        <div class="n-desc">I've prepared shortcuts for today's topic. Tap to see them before practice.</div>
+        <div class="n-time">1 hr ago</div>
+      </div>
+    </div>
+
+    <div class="notif-card unread a a3">
+      <div class="n-icon" style="background:var(--green-light)">📊</div>
+      <div class="n-body">
+        <div class="n-title">Mock #3 result is ready!</div>
+        <div class="n-desc">You scored 62/100 — Top 15% of 48,234 students. Tap to review.</div>
+        <div class="n-time">3 hr ago</div>
+      </div>
+    </div>
+
+    <!-- Yesterday -->
+    <div class="notif-group-label a a4" style="margin-top:8px">Yesterday</div>
+
+    <div class="notif-card a a4">
+      <div class="n-icon" style="background:var(--teal-light)">✅</div>
+      <div class="n-body">
+        <div class="n-title">Percentage chapter completed!</div>
+        <div class="n-desc">You finished all 15 MCQs with 73% accuracy. Great progress in Maths!</div>
+        <div class="n-time">Yesterday, 8:45 PM</div>
+      </div>
+    </div>
+
+    <div class="notif-card a a5">
+      <div class="n-icon" style="background:var(--orange-light)">📅</div>
+      <div class="n-body">
+        <div class="n-title">Daily plan updated</div>
+        <div class="n-desc">Ravi adjusted your plan based on yesterday's performance. 3 tasks for today.</div>
+        <div class="n-time">Yesterday, 7:00 AM</div>
+      </div>
+    </div>
+
+    <!-- Earlier -->
+    <div class="notif-group-label a a5" style="margin-top:8px">Earlier</div>
+
+    <div class="notif-card a a6">
+      <div class="n-icon" style="background:var(--amber-light)">🏆</div>
+      <div class="n-body">
+        <div class="n-title">Achievement unlocked: 3-week streak!</div>
+        <div class="n-desc">21 consecutive days of studying. You're in the top 5% of dedicated students.</div>
+        <div class="n-time">2 days ago</div>
+      </div>
+    </div>
+
+    <div class="notif-card a a6">
+      <div class="n-icon" style="background:var(--blue-light)">📰</div>
+      <div class="n-body">
+        <div class="n-title">October 2025 CA capsule is live!</div>
+        <div class="n-desc">72 new current affairs items with exam-filtered MCQs. Start revising now.</div>
+        <div class="n-time">3 days ago</div>
+      </div>
+    </div>
+
+    <div class="notif-card a a7">
+      <div class="n-icon" style="background:var(--red-light)">📕</div>
+      <div class="n-body">
+        <div class="n-title">5 wrong answers due for revision</div>
+        <div class="n-desc">Science questions from last week are ready for retry in your notebook.</div>
+        <div class="n-time">4 days ago</div>
+      </div>
+    </div>
+
+    <div class="notif-card a a7">
+      <div class="n-icon" style="background:var(--purple-surface)">🤖</div>
+      <div class="n-body">
+        <div class="n-title">Ravi: Weekly progress report</div>
+        <div class="n-desc">Your accuracy improved 4% this week. Reasoning is your strongest subject!</div>
+        <div class="n-time">5 days ago</div>
+      </div>
+    </div>
+
+    <div style="height:20px"></div>
+  </div>
+
+  <div class="hbar"><div></div></div>
+</div>
+
+<!-- ═══════════════════════════════
+     2. STREAK
+     ═══════════════════════════════ -->
+<div class="s" id="s1">
+  <div class="sb"><span class="t">9:41</span><div class="ic"><svg width="17" height="12" viewBox="0 0 17 12" fill="white"><rect x="0" y="3" width="3" height="9" rx="1"/><rect x="4.5" y="2" width="3" height="10" rx="1"/><rect x="9" y="0" width="3" height="12" rx="1"/><rect x="13.5" y="1" width="3" height="11" rx="1"/></svg><svg width="27" height="13" viewBox="0 0 27 13"><rect x="0" y="0" width="22" height="13" rx="2.5" stroke="white" stroke-width="1" fill="none" opacity=".4"/><rect x="2" y="2" width="18" height="9" rx="1.5" fill="white"/></svg></div></div>
+
+  <div class="header" style="padding-bottom:0">
+    <div class="hdr-row a a1" style="margin-bottom:8px">
+      <div class="hdr-left">
+        <div class="back"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></div>
+        <span class="hdr-title">Study Streak</span>
+      </div>
+    </div>
+    <!-- Streak Hero -->
+    <div class="streak-hero a a2">
+      <span class="sh-fire">🔥</span>
+      <span class="sh-count">23</span>
+      <span class="sh-label">day streak</span>
+      <span class="sh-sub">Your best: 23 days (current!)</span>
+    </div>
+  </div>
+
+  <div class="scroll">
+
+    <!-- Stats Row -->
+    <div class="streak-stats a a3">
+      <div class="ss-card">
+        <div class="ss-val">23</div>
+        <div class="ss-label">Current</div>
+      </div>
+      <div class="ss-card">
+        <div class="ss-val">23</div>
+        <div class="ss-label">Longest</div>
+      </div>
+      <div class="ss-card">
+        <div class="ss-val">1</div>
+        <div class="ss-label">Freezes Left</div>
+      </div>
+    </div>
+
+    <!-- Calendar -->
+    <div class="cal-card a a4">
+      <div class="cal-header">
+        <span class="cal-month">April 2026</span>
+        <div class="cal-arrows">
+          <div class="cal-arrow">‹</div>
+          <div class="cal-arrow">›</div>
+        </div>
+      </div>
+      <div class="cal-weekdays">
+        <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+      </div>
+      <div class="cal-grid">
+        <!-- Row 1: March overflow + April 1-4 -->
+        <div class="cal-day empty"></div>
+        <div class="cal-day empty"></div>
+        <div class="cal-day empty"></div>
+        <div class="cal-day active">1</div>
+        <div class="cal-day active">2</div>
+        <div class="cal-day active">3</div>
+        <div class="cal-day active">4</div>
+        <!-- Row 2 -->
+        <div class="cal-day active">5</div>
+        <div class="cal-day active">6</div>
+        <div class="cal-day active">7</div>
+        <div class="cal-day active">8</div>
+        <div class="cal-day active">9</div>
+        <div class="cal-day active">10</div>
+        <div class="cal-day active">11</div>
+        <!-- Row 3 -->
+        <div class="cal-day active">12</div>
+        <div class="cal-day active">13</div>
+        <div class="cal-day active">14</div>
+        <div class="cal-day active">15</div>
+        <div class="cal-day active">16</div>
+        <div class="cal-day active">17</div>
+        <div class="cal-day active">18</div>
+        <!-- Row 4 -->
+        <div class="cal-day today">19</div>
+        <div class="cal-day future">20</div>
+        <div class="cal-day future">21</div>
+        <div class="cal-day future">22</div>
+        <div class="cal-day future">23</div>
+        <div class="cal-day future">24</div>
+        <div class="cal-day future">25</div>
+        <!-- Row 5 -->
+        <div class="cal-day future">26</div>
+        <div class="cal-day future">27</div>
+        <div class="cal-day future">28</div>
+        <div class="cal-day future">29</div>
+        <div class="cal-day future">30</div>
+        <div class="cal-day empty"></div>
+        <div class="cal-day empty"></div>
+      </div>
+    </div>
+
+    <!-- Streak Freeze -->
+    <div class="freeze-card a a5">
+      <div class="freeze-icon">🛡️</div>
+      <div class="freeze-info">
+        <div class="freeze-title">Streak Freeze</div>
+        <div class="freeze-sub">Protects your streak if you miss a day</div>
+      </div>
+      <button class="freeze-btn">1 left</button>
+    </div>
+
+    <!-- Milestones -->
+    <div class="milestones-title a a6">Milestones</div>
+    <div class="milestones a a6">
+      <div class="milestone unlocked">
+        <div class="ms-icon">⭐</div>
+        <div class="ms-days">7 days</div>
+        <div class="ms-label">Unlocked!</div>
+      </div>
+      <div class="milestone unlocked">
+        <div class="ms-icon">🌟</div>
+        <div class="ms-days">14 days</div>
+        <div class="ms-label">Unlocked!</div>
+      </div>
+      <div class="milestone unlocked">
+        <div class="ms-icon">🏅</div>
+        <div class="ms-days">21 days</div>
+        <div class="ms-label">Unlocked!</div>
+      </div>
+      <div class="milestone current">
+        <div class="ms-icon">🏆</div>
+        <div class="ms-days">30 days</div>
+        <div class="ms-label">7 more!</div>
+      </div>
+      <div class="milestone locked">
+        <div class="ms-icon">💎</div>
+        <div class="ms-days">60 days</div>
+        <div class="ms-label">Locked</div>
+      </div>
+      <div class="milestone locked">
+        <div class="ms-icon">👑</div>
+        <div class="ms-days">100 days</div>
+        <div class="ms-label">Locked</div>
+      </div>
+    </div>
+
+    <!-- Ravi motivation -->
+    <div class="ravi-card a a7">
+      <div class="ravi-av">R</div>
+      <div>
+        <div class="rc-name">Ravi says:</div>
+        <p>23 din ho gaye! Bas 7 din aur — 30-day milestone unlock hone wala hai. Aaj ka plan zaroor complete karo! 💪</p>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="hbar"><div></div></div>
+</div>
+
+</div>
+
+<script>
+const labels=['Notifications','Streak'];
+const nav=document.getElementById('nav');
+labels.forEach((l,i)=>{
+  const b=document.createElement('button');
+  b.textContent=l;
+  if(i===0)b.classList.add('on');
+  b.onclick=()=>{
+    document.querySelectorAll('.s').forEach(s=>s.classList.remove('on'));
+    document.querySelectorAll('.screen-nav button').forEach(x=>x.classList.remove('on'));
+    document.getElementById('s'+i).classList.add('on');
+    b.classList.add('on');
+  };
+  nav.appendChild(b);
+});
+</script>
+</body>
+</html>

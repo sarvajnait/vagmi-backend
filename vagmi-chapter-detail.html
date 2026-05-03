@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=375, initial-scale=1.0">
+<title>Vagmi AI — Chapter Detail</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --purple-deep:#3B1578;
+  --purple-mid:#5E2CA5;
+  --purple-primary:#7C3AED;
+  --purple-light:#A78BFA;
+  --purple-surface:#F3EEFF;
+  --header-gradient:linear-gradient(180deg,#3B1578 0%,#5E2CA5 40%,#7C3AED 85%,#9061F0 100%);
+  --teal:#0D9488;
+  --teal-light:#CCFBF1;
+  --amber:#D97706;
+  --amber-light:#FEF3C7;
+  --green:#059669;
+  --green-light:#D1FAE5;
+  --red:#DC2626;
+  --red-light:#FEE2E2;
+  --orange:#EA580C;
+  --orange-light:#FFF7ED;
+  --blue:#3B82F6;
+  --blue-light:#DBEAFE;
+  --bg:#F8F7FC;
+  --surface:#FFFFFF;
+  --card-border:#EDEBF5;
+  --border:#E8E5F0;
+  --text:#1A1A2E;
+  --text2:#5A5775;
+  --text3:#9590A8;
+  --text4:#C4BDD4;
+  --shadow-card:0 2px 8px rgba(60,20,120,.06);
+}
+
+body{
+  font-family:'Nunito',system-ui,sans-serif;
+  background:#0C0B12;
+  display:flex;align-items:flex-start;justify-content:center;
+  min-height:100vh;padding:24px 16px;
+}
+
+.device{
+  width:375px;height:812px;border-radius:44px;overflow:hidden;
+  position:relative;background:var(--bg);
+  box-shadow:0 0 0 2px #1e1e30,0 0 0 5px #2c2c44,0 30px 80px rgba(0,0,0,.6);
+}
+.screen{width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden}
+
+/* Status bar */
+.sb{display:flex;justify-content:space-between;align-items:center;padding:14px 28px 0;height:48px;flex-shrink:0;background:var(--purple-deep)}
+.sb .t{font-size:16px;font-weight:700;color:#fff;letter-spacing:-.2px}
+.sb .ic{display:flex;gap:5px;align-items:center}
+
+/* Header */
+.header{background:var(--header-gradient);padding:8px 20px 0;position:relative;flex-shrink:0}
+.header::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:24px;background:var(--bg);border-radius:24px 24px 0 0}
+
+.hdr-row{display:flex;align-items:center;gap:12px;position:relative;z-index:2;margin-bottom:6px}
+.back{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
+.back svg{width:18px;height:18px;fill:#fff}
+.hdr-info{flex:1}
+.hdr-title{font-size:20px;font-weight:800;color:#fff;letter-spacing:-.3px}
+.hdr-sub{font-size:12px;color:rgba(255,255,255,.55);font-weight:500;margin-top:1px;display:flex;align-items:center;gap:6px}
+.hdr-sub .dot{width:3px;height:3px;border-radius:50%;background:rgba(255,255,255,.35)}
+.lang{padding:5px 10px;border-radius:10px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.1);font-size:12px;font-weight:700;color:rgba(255,255,255,.85);cursor:pointer;flex-shrink:0}
+
+/* Progress strip */
+.progress-strip{
+  margin:6px 4px 18px;padding:12px 16px;
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.1);
+  border-radius:14px;backdrop-filter:blur(8px);
+  position:relative;z-index:2;
+  display:flex;align-items:center;gap:12px;
+}
+.ps-bar{flex:1;height:6px;background:rgba(255,255,255,.15);border-radius:3px;overflow:hidden}
+.ps-bar .fill{height:100%;background:#fff;border-radius:3px}
+.ps-pct{font-size:14px;font-weight:800;color:#fff}
+.ps-label{font-size:11px;color:rgba(255,255,255,.5);font-weight:600}
+
+/* Tabs */
+.tabs{
+  display:flex;margin:4px 20px 0;
+  background:var(--surface);border:1.5px solid var(--card-border);
+  border-radius:14px;padding:4px;flex-shrink:0;
+  box-shadow:var(--shadow-card);
+}
+.tab{
+  flex:1;height:40px;border-radius:11px;
+  display:flex;align-items:center;justify-content:center;gap:5px;
+  font-family:'Nunito',sans-serif;font-size:13px;font-weight:700;
+  color:var(--text3);background:transparent;
+  border:none;cursor:pointer;transition:.2s;
+}
+.tab.on{background:var(--purple-primary);color:#fff;box-shadow:0 2px 8px rgba(124,58,237,.2)}
+.tab .tab-count{font-size:10px;font-weight:800;padding:1px 6px;border-radius:6px;background:rgba(0,0,0,.06)}
+.tab.on .tab-count{background:rgba(255,255,255,.2)}
+
+/* Scroll */
+.scroll{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding-top:14px}
+.scroll::-webkit-scrollbar{display:none}
+
+/* Tab panels */
+.panel{display:none}
+.panel.on{display:block}
+
+/* ═══════ NOTES TAB ═══════ */
+.notes-content{padding:0 20px}
+
+.note-section{margin-bottom:20px}
+.note-h2{font-size:17px;font-weight:800;color:var(--text);margin-bottom:10px;letter-spacing:-.1px}
+.note-p{font-size:14px;color:var(--text2);line-height:1.7;font-weight:500;margin-bottom:12px}
+
+/* Info boxes */
+.info-box{
+  padding:14px 16px;border-radius:14px;
+  margin-bottom:12px;display:flex;gap:12px;
+  align-items:flex-start;
+}
+.info-box .ib-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+.info-box .ib-content{flex:1}
+.info-box .ib-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+.info-box .ib-text{font-size:13px;line-height:1.6;font-weight:500}
+
+.box-formula{background:var(--purple-surface);border:1px solid rgba(124,58,237,.1)}
+.box-formula .ib-title{color:var(--purple-primary)}
+.box-formula .ib-text{color:var(--text)}
+
+.box-shortcut{background:var(--teal-light);border:1px solid rgba(13,148,136,.1)}
+.box-shortcut .ib-title{color:var(--teal)}
+.box-shortcut .ib-text{color:var(--text)}
+
+.box-pyq{background:var(--orange-light);border:1px solid rgba(234,88,12,.1)}
+.box-pyq .ib-title{color:var(--orange)}
+.box-pyq .ib-text{color:var(--text2)}
+
+.box-mistake{background:var(--red-light);border:1px solid rgba(220,38,38,.08)}
+.box-mistake .ib-title{color:var(--red)}
+.box-mistake .ib-text{color:var(--text2)}
+
+/* Inline MCQ in notes */
+.inline-mcq{
+  margin:16px 0;padding:16px;
+  background:var(--surface);border:1.5px solid var(--card-border);
+  border-radius:14px;box-shadow:var(--shadow-card);
+}
+.imcq-label{font-size:10px;font-weight:800;color:var(--purple-primary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.imcq-q{font-size:14px;font-weight:600;color:var(--text);line-height:1.5;margin-bottom:12px}
+.imcq-opts{display:flex;flex-direction:column;gap:6px}
+.imcq-opt{
+  padding:10px 14px;border-radius:10px;
+  border:1.5px solid var(--border);background:var(--bg);
+  font-size:13px;font-weight:600;color:var(--text2);
+  cursor:pointer;transition:.15s;display:flex;align-items:center;gap:10px;
+}
+.imcq-opt:hover{border-color:var(--purple-light);background:var(--purple-surface)}
+.imcq-opt .opt-letter{
+  width:24px;height:24px;border-radius:50%;
+  background:var(--surface);border:1.5px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:800;color:var(--text3);flex-shrink:0;
+}
+
+/* ═══════ VIDEOS TAB ═══════ */
+.video-card{
+  margin:0 20px 12px;padding:0;
+  background:var(--surface);border:1px solid var(--card-border);
+  border-radius:16px;box-shadow:var(--shadow-card);
+  overflow:hidden;cursor:pointer;transition:.15s;
+}
+.video-card:hover{box-shadow:0 4px 16px rgba(60,20,120,.1)}
+.video-thumb{
+  height:160px;background:linear-gradient(135deg,var(--purple-deep),var(--purple-mid));
+  display:flex;align-items:center;justify-content:center;
+  position:relative;
+}
+.play-btn{
+  width:52px;height:52px;border-radius:50%;
+  background:rgba(255,255,255,.2);backdrop-filter:blur(8px);
+  border:2px solid rgba(255,255,255,.3);
+  display:flex;align-items:center;justify-content:center;
+}
+.play-btn svg{width:22px;height:22px;fill:#fff;margin-left:3px}
+.video-duration{
+  position:absolute;bottom:10px;right:12px;
+  padding:3px 8px;border-radius:6px;
+  background:rgba(0,0,0,.6);color:#fff;
+  font-size:11px;font-weight:700;
+}
+.video-info{padding:14px 16px}
+.video-title{font-size:14px;font-weight:700;color:var(--text);line-height:1.35}
+.video-meta{font-size:12px;color:var(--text3);margin-top:4px;font-weight:500;display:flex;align-items:center;gap:6px}
+.video-meta .dot{width:3px;height:3px;border-radius:50%;background:var(--text4)}
+
+.no-video{
+  margin:20px;padding:32px 20px;
+  background:var(--surface);border:1px solid var(--card-border);
+  border-radius:16px;text-align:center;
+}
+.no-video .nv-icon{font-size:36px;margin-bottom:10px}
+.no-video .nv-title{font-size:15px;font-weight:700;color:var(--text)}
+.no-video .nv-sub{font-size:13px;color:var(--text3);margin-top:4px;font-weight:500}
+
+/* ═══════ MCQs TAB ═══════ */
+.mcq-summary{
+  margin:0 20px 14px;padding:14px 16px;
+  background:var(--surface);border:1px solid var(--card-border);
+  border-radius:14px;box-shadow:var(--shadow-card);
+  display:flex;justify-content:space-around;
+}
+.ms-item{text-align:center}
+.ms-val{font-size:18px;font-weight:900;color:var(--text)}
+.ms-label{font-size:10px;font-weight:600;color:var(--text3);margin-top:2px;text-transform:uppercase;letter-spacing:.3px}
+
+/* Practice all button */
+.practice-all{
+  margin:0 20px 16px;padding:14px;
+  background:var(--purple-primary);border-radius:14px;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  cursor:pointer;box-shadow:0 4px 16px rgba(124,58,237,.25);
+  transition:.15s;
+}
+.practice-all:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(124,58,237,.3)}
+.practice-all span{font-size:14px;font-weight:700;color:#fff}
+.practice-all .pa-count{font-size:11px;font-weight:700;color:rgba(255,255,255,.7);background:rgba(255,255,255,.15);padding:2px 8px;border-radius:6px}
+
+/* Sub-topic group */
+.subtopic-group{margin:0 20px 16px}
+.stg-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:10px;
+}
+.stg-name{font-size:15px;font-weight:800;color:var(--text);letter-spacing:-.1px}
+.stg-count{font-size:11px;font-weight:700;color:var(--text3)}
+
+.stg-card{
+  padding:14px 16px;background:var(--surface);
+  border:1px solid var(--card-border);border-radius:14px;
+  box-shadow:var(--shadow-card);cursor:pointer;transition:.15s;
+}
+.stg-card:hover{box-shadow:0 4px 12px rgba(60,20,120,.1);transform:translateY(-1px)}
+
+.stg-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.stg-q-count{font-size:13px;font-weight:600;color:var(--text2)}
+.stg-accuracy{padding:4px 10px;border-radius:8px;font-size:11px;font-weight:800}
+.stg-acc-green{background:var(--green-light);color:var(--green)}
+.stg-acc-amber{background:var(--amber-light);color:var(--amber)}
+.stg-acc-red{background:var(--red-light);color:var(--red)}
+.stg-acc-new{background:var(--border);color:var(--text3)}
+
+.stg-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin-bottom:8px}
+.stg-bar .fill{height:100%;border-radius:2px}
+
+.stg-bottom{display:flex;align-items:center;justify-content:space-between}
+.stg-tags{display:flex;gap:6px}
+.stg-tag{padding:3px 9px;border-radius:8px;font-size:10px;font-weight:700}
+.stg-tag-easy{background:var(--green-light);color:var(--green)}
+.stg-tag-medium{background:var(--amber-light);color:var(--amber)}
+.stg-tag-hard{background:var(--red-light);color:var(--red)}
+.stg-tag-pyq{background:var(--orange-light);color:var(--orange)}
+.stg-arrow{font-size:18px;color:var(--text4)}
+
+/* Bottom nav */
+.bnav{display:flex;justify-content:space-around;align-items:center;height:64px;background:var(--surface);border-top:1px solid var(--card-border);flex-shrink:0;padding-bottom:2px}
+.ni{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:6px 14px 2px}
+.ni svg{width:23px;height:23px;fill:var(--text4)}
+.ni span{font-size:10.5px;font-weight:600;color:var(--text4)}
+.ni.on svg{fill:var(--purple-primary)}
+.ni.on span{color:var(--purple-primary);font-weight:700}
+.hbar{height:24px;display:flex;align-items:center;justify-content:center;background:var(--surface);flex-shrink:0}
+.hbar div{width:134px;height:5px;border-radius:3px;background:var(--text);opacity:.15}
+
+/* Animations */
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.a{animation:fadeUp .35s ease both}
+.a1{animation-delay:.03s}.a2{animation-delay:.06s}.a3{animation-delay:.09s}
+.a4{animation-delay:.12s}.a5{animation-delay:.15s}.a6{animation-delay:.18s}
+.a7{animation-delay:.21s}.a8{animation-delay:.24s}
+</style>
+</head>
+<body>
+
+<div class="device">
+  <div class="screen">
+
+    <!-- Status Bar -->
+    <div class="sb">
+      <span class="t">11:15</span>
+      <div class="ic">
+        <svg width="17" height="12" viewBox="0 0 17 12" fill="white"><rect x="0" y="3" width="3" height="9" rx="1"/><rect x="4.5" y="2" width="3" height="10" rx="1"/><rect x="9" y="0" width="3" height="12" rx="1"/><rect x="13.5" y="1" width="3" height="11" rx="1"/></svg>
+        <svg width="16" height="12" viewBox="0 0 16 12" fill="white"><path d="M1.5 4.5C3.87 2.13 7.13.5 8 .5s4.13 1.63 6.5 4l-1.42 1.42C11.18 4.02 9.24 3 8 3S4.82 4.02 2.92 5.92L1.5 4.5zM4.34 7.34C5.4 6.28 6.62 5.5 8 5.5s2.6.78 3.66 1.84l-1.42 1.42C9.5 8.02 8.84 7.5 8 7.5s-1.5.52-2.24 1.26L4.34 7.34zM8 10l1.5-1.5c-.42-.42-.92-.5-1.5-.5s-1.08.08-1.5.5L8 10z"/></svg>
+        <svg width="27" height="13" viewBox="0 0 27 13"><rect x="0" y="0" width="22" height="13" rx="2.5" stroke="white" stroke-width="1" fill="none" opacity=".4"/><rect x="23.5" y="4" width="2" height="5" rx="1" fill="white" opacity=".4"/><rect x="2" y="2" width="18" height="9" rx="1.5" fill="white"/></svg>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <div class="header">
+      <div class="hdr-row a a1">
+        <div class="back"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></div>
+        <div class="hdr-info">
+          <div class="hdr-title">Percentage</div>
+          <div class="hdr-sub">
+            <span>Mathematics</span>
+            <span class="dot"></span>
+            <span>15 MCQs</span>
+            <span class="dot"></span>
+            <span>Medium</span>
+          </div>
+        </div>
+        <div class="lang">हिं | EN</div>
+      </div>
+      <div class="progress-strip a a2">
+        <div style="flex:1">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span class="ps-label">Chapter progress</span>
+            <span class="ps-pct">65%</span>
+          </div>
+          <div class="ps-bar"><div class="fill" style="width:65%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs a a3">
+      <button class="tab on" data-tab="notes">📖 Notes</button>
+      <button class="tab" data-tab="videos">🎬 Videos <span class="tab-count">2</span></button>
+      <button class="tab" data-tab="mcqs">📝 MCQs <span class="tab-count">15</span></button>
+    </div>
+
+    <!-- Scrollable content -->
+    <div class="scroll">
+
+      <!-- ═══ NOTES PANEL ═══ -->
+      <div class="panel on" id="panel-notes">
+        <div class="notes-content">
+
+          <div class="note-section a a4">
+            <h2 class="note-h2">What is Percentage?</h2>
+            <p class="note-p">Percentage means "per hundred." It is a way of expressing a number as a fraction of 100. The symbol % is used to denote percentage.</p>
+            <p class="note-p">For example, 45% means 45 out of 100, or 45/100 = 0.45</p>
+          </div>
+
+          <div class="info-box box-formula a a4">
+            <span class="ib-icon">📐</span>
+            <div class="ib-content">
+              <div class="ib-title">Key Formula</div>
+              <div class="ib-text">Percentage = (Value / Total) × 100<br>Value = (Percentage × Total) / 100</div>
+            </div>
+          </div>
+
+          <div class="note-section a a5">
+            <h2 class="note-h2">Percentage Change</h2>
+            <p class="note-p">When a value increases or decreases, we calculate the percentage change to understand the magnitude of the change relative to the original value.</p>
+          </div>
+
+          <div class="info-box box-formula a a5">
+            <span class="ib-icon">📐</span>
+            <div class="ib-content">
+              <div class="ib-title">Key Formula</div>
+              <div class="ib-text">% Change = [(New − Old) / Old] × 100<br>Increase → positive, Decrease → negative</div>
+            </div>
+          </div>
+
+          <div class="info-box box-shortcut a a5">
+            <span class="ib-icon">⚡</span>
+            <div class="ib-content">
+              <div class="ib-title">Shortcut</div>
+              <div class="ib-text">If a number increases by x% then decreases by x%, the net effect is always a decrease of (x²/100)%</div>
+            </div>
+          </div>
+
+          <div class="info-box box-pyq a a6">
+            <span class="ib-icon">🔥</span>
+            <div class="ib-content">
+              <div class="ib-title">PYQ Alert</div>
+              <div class="ib-text">Successive percentage problems appeared in 5 out of 8 RRB Group D papers. Focus on this!</div>
+            </div>
+          </div>
+
+          <!-- Inline MCQ -->
+          <div class="inline-mcq a a6">
+            <div class="imcq-label">Quick Check ✍️</div>
+            <div class="imcq-q">If a price increases from ₹200 to ₹250, what is the percentage increase?</div>
+            <div class="imcq-opts">
+              <div class="imcq-opt"><span class="opt-letter">A</span> 20%</div>
+              <div class="imcq-opt"><span class="opt-letter">B</span> 25%</div>
+              <div class="imcq-opt"><span class="opt-letter">C</span> 30%</div>
+              <div class="imcq-opt"><span class="opt-letter">D</span> 50%</div>
+            </div>
+          </div>
+
+          <div class="note-section a a7">
+            <h2 class="note-h2">Successive Percentage</h2>
+            <p class="note-p">When two percentage changes happen one after another on the same base, we use the successive percentage formula instead of adding them directly.</p>
+          </div>
+
+          <div class="info-box box-formula a a7">
+            <span class="ib-icon">📐</span>
+            <div class="ib-content">
+              <div class="ib-title">Key Formula</div>
+              <div class="ib-text">Net effect = a + b + (ab/100)<br>Where a and b are successive % changes</div>
+            </div>
+          </div>
+
+          <div class="info-box box-mistake a a7">
+            <span class="ib-icon">⚠️</span>
+            <div class="ib-content">
+              <div class="ib-title">Common Mistake</div>
+              <div class="ib-text">Students often add successive percentages directly (20% + 30% = 50%). Always use the formula — the correct answer is 56%.</div>
+            </div>
+          </div>
+
+          <div style="height:24px"></div>
+        </div>
+      </div>
+
+      <!-- ═══ VIDEOS PANEL ═══ -->
+      <div class="panel" id="panel-videos">
+
+        <div class="video-card a a4">
+          <div class="video-thumb">
+            <div class="play-btn"><svg viewBox="0 0 24 24"><polygon points="8,5 20,12 8,19"/></svg></div>
+            <span class="video-duration">12:34</span>
+          </div>
+          <div class="video-info">
+            <div class="video-title">Percentage Basics — Concepts & Shortcuts</div>
+            <div class="video-meta">
+              <span>By Vagmi</span>
+              <span class="dot"></span>
+              <span>Hindi</span>
+              <span class="dot"></span>
+              <span>12.3K views</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="video-card a a5">
+          <div class="video-thumb" style="background:linear-gradient(135deg,#0D9488,#065F53)">
+            <div class="play-btn"><svg viewBox="0 0 24 24"><polygon points="8,5 20,12 8,19"/></svg></div>
+            <span class="video-duration">18:07</span>
+          </div>
+          <div class="video-info">
+            <div class="video-title">Successive Percentage & PYQ Tricks</div>
+            <div class="video-meta">
+              <span>By Vagmi</span>
+              <span class="dot"></span>
+              <span>Hindi</span>
+              <span class="dot"></span>
+              <span>8.7K views</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="height:24px"></div>
+      </div>
+
+      <!-- ═══ MCQs PANEL ═══ -->
+      <div class="panel" id="panel-mcqs">
+
+        <!-- MCQ Summary -->
+        <div class="mcq-summary a a4">
+          <div class="ms-item"><div class="ms-val">15</div><div class="ms-label">Total</div></div>
+          <div class="ms-item"><div class="ms-val">9</div><div class="ms-label">Attempted</div></div>
+          <div class="ms-item"><div class="ms-val">67%</div><div class="ms-label">Accuracy</div></div>
+        </div>
+
+        <!-- Practice All -->
+        <div class="practice-all a a4">
+          <span>▶ Practice All Questions</span>
+          <span class="pa-count">15 Qs</span>
+        </div>
+
+        <!-- Sub-topic 1: Basic Percentage -->
+        <div class="subtopic-group a a5">
+          <div class="stg-header">
+            <span class="stg-name">Basic Percentage</span>
+            <span class="stg-count">5 questions</span>
+          </div>
+          <div class="stg-card">
+            <div class="stg-top">
+              <span class="stg-q-count">5 questions · 4 correct</span>
+              <span class="stg-accuracy stg-acc-green">80%</span>
+            </div>
+            <div class="stg-bar"><div class="fill" style="width:100%;background:var(--green)"></div></div>
+            <div class="stg-bottom">
+              <div class="stg-tags">
+                <span class="stg-tag stg-tag-easy">Easy</span>
+              </div>
+              <span class="stg-arrow">›</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-topic 2: Percentage Change -->
+        <div class="subtopic-group a a6">
+          <div class="stg-header">
+            <span class="stg-name">Percentage Change</span>
+            <span class="stg-count">5 questions</span>
+          </div>
+          <div class="stg-card">
+            <div class="stg-top">
+              <span class="stg-q-count">4 attempted · 2 correct</span>
+              <span class="stg-accuracy stg-acc-amber">50%</span>
+            </div>
+            <div class="stg-bar"><div class="fill" style="width:80%;background:var(--amber)"></div></div>
+            <div class="stg-bottom">
+              <div class="stg-tags">
+                <span class="stg-tag stg-tag-medium">Medium</span>
+                <span class="stg-tag stg-tag-pyq">🔥 High PYQ</span>
+              </div>
+              <span class="stg-arrow">›</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-topic 3: Successive Percentage -->
+        <div class="subtopic-group a a7">
+          <div class="stg-header">
+            <span class="stg-name">Successive Percentage</span>
+            <span class="stg-count">5 questions</span>
+          </div>
+          <div class="stg-card">
+            <div class="stg-top">
+              <span class="stg-q-count">Not attempted yet</span>
+              <span class="stg-accuracy stg-acc-new">New</span>
+            </div>
+            <div class="stg-bar"><div class="fill" style="width:0%"></div></div>
+            <div class="stg-bottom">
+              <div class="stg-tags">
+                <span class="stg-tag stg-tag-hard">Hard</span>
+                <span class="stg-tag stg-tag-pyq">🔥 High PYQ</span>
+              </div>
+              <span class="stg-arrow">›</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="height:24px"></div>
+      </div>
+
+    </div>
+
+    <!-- Bottom Nav -->
+    <div class="bnav">
+      <div class="ni"><svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg><span>Home</span></div>
+      <div class="ni on"><svg viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg><span>Learn</span></div>
+      <div class="ni"><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><span>PYQ</span></div>
+      <div class="ni"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg><span>Mock</span></div>
+      <div class="ni"><svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg><span>Me</span></div>
+    </div>
+    <div class="hbar"><div></div></div>
+
+  </div>
+</div>
+
+<script>
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('on'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('on'));
+    tab.classList.add('on');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('on');
+  });
+});
+
+// Inline MCQ interaction
+document.querySelectorAll('.imcq-opt').forEach(opt => {
+  opt.addEventListener('click', () => {
+    const parent = opt.closest('.imcq-opts');
+    parent.querySelectorAll('.imcq-opt').forEach(o => {
+      o.style.borderColor = 'var(--border)';
+      o.style.background = 'var(--bg)';
+      o.querySelector('.opt-letter').style.background = 'var(--surface)';
+      o.querySelector('.opt-letter').style.borderColor = 'var(--border)';
+      o.querySelector('.opt-letter').style.color = 'var(--text3)';
+    });
+    opt.style.borderColor = 'var(--purple-primary)';
+    opt.style.background = 'var(--purple-surface)';
+    opt.querySelector('.opt-letter').style.background = 'var(--purple-primary)';
+    opt.querySelector('.opt-letter').style.borderColor = 'var(--purple-primary)';
+    opt.querySelector('.opt-letter').style.color = '#fff';
+  });
+});
+</script>
+</body>
+</html>
