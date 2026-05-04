@@ -119,10 +119,13 @@ async def create_retry_session(
 
     wrong_activity_ids = [e.activity_id for e in entries]
 
+    # M-7: derive scope from entries, not from caller-provided value
+    derived_chapter_id = next((e.comp_chapter_id for e in entries if e.comp_chapter_id), None)
+
     from app.models.comp_activities import CompActivityPlaySession
     play_session = CompActivityPlaySession(
         user_id=user_id,
-        comp_chapter_id=comp_chapter_id,
+        comp_chapter_id=derived_chapter_id,
         total_questions=len(wrong_activity_ids),
     )
     db.add(play_session)

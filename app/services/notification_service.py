@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -60,6 +62,18 @@ async def notify_wrong_answer_reminder(
     count: int,
     db: AsyncSession,
 ) -> None:
+    # M-5: suppress if already sent within the last 24 hours
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    _recent = await db.exec(
+        select(UserNotification).where(
+            UserNotification.user_id == user_id,
+            UserNotification.notif_type == "wrong_answer_reminder",
+            UserNotification.created_at >= cutoff,
+        ).limit(1)
+    )
+    if _recent.first():
+        return
+
     await create_notification(
         user_id=user_id,
         title=f"📕 {count} wrong answers due for revision",

@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -205,26 +205,23 @@ async def profile_stats(
     streak = streak_result.first()
     current_streak = streak.current_streak if streak else 0
 
-    total_answered_result = await session.exec(
-        select(func.coalesce(func.sum(CompActivityPlaySession.total_questions), 0)).where(
+    # L-6: use distinct activity counts to avoid inflating numbers on replay
+    stats_result = await session.exec(
+        select(
+            func.count(func.distinct(CompActivityAnswer.activity_id)),
+            func.count(func.distinct(
+                case((CompActivityAnswer.is_correct == True, CompActivityAnswer.activity_id), else_=None)
+            )),
+        )
+        .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
+        .where(
             CompActivityPlaySession.user_id == current_user.id,
             CompActivityPlaySession.status == "completed",
         )
     )
-    total_answered = total_answered_result.first() or 0
-    if isinstance(total_answered, tuple):
-        total_answered = total_answered[0]
-
-    total_correct_result = await session.exec(
-        select(func.coalesce(func.sum(CompActivityPlaySession.correct_count), 0)).where(
-            CompActivityPlaySession.user_id == current_user.id,
-            CompActivityPlaySession.status == "completed",
-        )
-    )
-    total_correct = total_correct_result.first() or 0
-    if isinstance(total_correct, tuple):
-        total_correct = total_correct[0]
-
+    _stats = stats_result.first()
+    total_answered = _stats[0] if _stats else 0
+    total_correct = _stats[1] if _stats else 0
     accuracy_pct = round(total_correct / total_answered * 100) if total_answered > 0 else 0
 
     wrong_count_result = await session.exec(
@@ -256,9 +253,8 @@ class MarkReadPayload(BaseModel):
 
 
 def _group_notifications(notifications: list) -> list[dict]:
-    today = datetime.now(timezone.utc).date()
-    yesterday = today.replace(day=today.day - 1) if today.day > 1 else today  # safe enough; timedelta preferred
     from datetime import timedelta
+    today = datetime.now(timezone.utc).date()
     yesterday = today - timedelta(days=1)
 
     groups: dict[str, list] = {"Today": [], "Yesterday": [], "Earlier": []}

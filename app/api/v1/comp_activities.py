@@ -1106,6 +1106,7 @@ async def get_comp_activity_progress(
         .join(CompActivityPlaySession)
         .where(
             CompActivityPlaySession.user_id == current_user.id,
+            CompActivityPlaySession.status == "completed",
             CompActivityAnswer.activity_id.in_(activity_ids),
         )
         .distinct()
@@ -1213,6 +1214,9 @@ async def submit_comp_answer(
     activity = await session.get(CompChapterActivity, payload.activity_id)
     if not activity or (activity.comp_chapter_id != play_session.comp_chapter_id and activity.sub_chapter_id != play_session.sub_chapter_id):
         raise HTTPException(status_code=404, detail="Activity not found for this session")
+    # H-1: group-scoped session must not accept activities from a different group
+    if play_session.activity_group_id and activity.activity_group_id != play_session.activity_group_id:
+        raise HTTPException(status_code=404, detail="Activity does not belong to this session's group")
     if not activity.is_published:
         raise HTTPException(status_code=400, detail="Activity not published")
 
@@ -1225,11 +1229,27 @@ async def submit_comp_answer(
     if _existing.first():
         raise HTTPException(status_code=400, detail="Answer already submitted")
 
-    if payload.selected_option_index not in {1, 2, 3, 4}:
-        raise HTTPException(status_code=400, detail="selected_option_index must be 1-4")
+    # C-1: snapshot activity fields before any commits can expire the ORM object
+    is_mcq = activity.type == "mcq"
+    activity_options = list(activity.options or [])
+    activity_correct_option_index = activity.correct_option_index
+    activity_answer_description = activity.answer_description
+    activity_answer_image_url = activity.answer_image_url
+    # also snapshot group/chapter scope for completion check later
+    ps_activity_group_id = play_session.activity_group_id
 
-    is_correct = payload.selected_option_index == activity.correct_option_index
-    score = 1 if is_correct else 0
+    # M-1/M-2: type-aware correctness — descriptive questions have no correct option
+    if is_mcq:
+        if payload.selected_option_index not in {1, 2, 3, 4}:
+            raise HTTPException(status_code=400, detail="selected_option_index must be 1-4")
+        is_correct = (
+            payload.selected_option_index is not None
+            and payload.selected_option_index == activity_correct_option_index
+        )
+        score = 1 if is_correct else 0
+    else:
+        is_correct = None
+        score = 0
 
     answer = CompActivityAnswer(
         session_id=session_id,
@@ -1239,7 +1259,8 @@ async def submit_comp_answer(
         score=score,
     )
     session.add(answer)
-    play_session.correct_count += 1 if is_correct else 0
+    if is_correct:
+        play_session.correct_count += 1
     play_session.score += score
     session.add(play_session)
     await session.commit()
@@ -1252,7 +1273,26 @@ async def submit_comp_answer(
     if isinstance(answered_count, tuple):
         answered_count = answered_count[0]
 
-    completed = answered_count >= play_session.total_questions
+    # C-4: use live published count so session doesn't get stuck if activities were unpublished
+    if ps_activity_group_id:
+        _live_result = await session.exec(
+            select(func.count()).where(
+                CompChapterActivity.activity_group_id == ps_activity_group_id,
+                CompChapterActivity.is_published == True,
+            )
+        )
+    else:
+        _fc = CompChapterActivity.comp_chapter_id if play_session.comp_chapter_id else CompChapterActivity.sub_chapter_id
+        _fv = play_session.comp_chapter_id or play_session.sub_chapter_id
+        _live_result = await session.exec(
+            select(func.count()).where(_fc == _fv, CompChapterActivity.is_published == True)
+        )
+    live_count = _live_result.first() or 0
+    if isinstance(live_count, tuple):
+        live_count = live_count[0]
+    effective_total = max(1, min(play_session.total_questions, int(live_count)))
+    completed = answered_count >= effective_total
+
     if completed:
         play_session.status = "completed"
         play_session.completed_at = datetime.now(UTC)
@@ -1266,11 +1306,12 @@ async def submit_comp_answer(
     ps_sub_chapter_id = play_session.sub_chapter_id
 
     if completed:
+        import logging as _logging
         try:
             await process_session_answers(session_id, current_user.id, session)
             await record_streak_activity(current_user.id, session)
 
-            # Wrong-answer reminder if count >= 5
+            # Wrong-answer reminder if count >= 5 (cooldown enforced inside notify fn)
             _wcount_result = await session.exec(
                 select(func.count(WrongAnswerEntry.id)).where(
                     WrongAnswerEntry.user_id == current_user.id,
@@ -1283,7 +1324,7 @@ async def submit_comp_answer(
             if wrong_count >= 5:
                 await notify_wrong_answer_reminder(current_user.id, int(wrong_count), session)
 
-            # Chapter complete notification if no unanswered questions remain in chapter
+            # C-3: chapter complete — only count answers from completed sessions
             if ps_chapter_id:
                 _unanswered_result = await session.exec(
                     select(func.count(CompChapterActivity.id))
@@ -1293,7 +1334,10 @@ async def submit_comp_answer(
                         ~CompChapterActivity.id.in_(
                             select(CompActivityAnswer.activity_id)
                             .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
-                            .where(CompActivityPlaySession.user_id == current_user.id)
+                            .where(
+                                CompActivityPlaySession.user_id == current_user.id,
+                                CompActivityPlaySession.status == "completed",
+                            )
                         ),
                     )
                 )
@@ -1304,19 +1348,40 @@ async def submit_comp_answer(
                     from app.models.competitive_hierarchy import CompChapter
                     chapter_obj = await session.get(CompChapter, ps_chapter_id)
                     if chapter_obj:
-                        accuracy = round(session_snapshot["correct_count"] / session_snapshot["total_questions"] * 100) if session_snapshot["total_questions"] else 0
+                        # H-4: use chapter-wide accuracy, not just this session
+                        _ch_acc = await session.exec(
+                            select(
+                                func.count(func.distinct(
+                                    case((CompActivityAnswer.is_correct == True, CompActivityAnswer.activity_id), else_=None)
+                                )),
+                                func.count(func.distinct(CompActivityAnswer.activity_id)),
+                            )
+                            .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
+                            .where(
+                                CompActivityPlaySession.user_id == current_user.id,
+                                CompActivityPlaySession.comp_chapter_id == ps_chapter_id,
+                                CompActivityPlaySession.status == "completed",
+                            )
+                        )
+                        _acc_row = _ch_acc.first()
+                        ch_correct = _acc_row[0] if _acc_row else 0
+                        ch_answered = _acc_row[1] if _acc_row else 0
+                        accuracy = round(ch_correct / ch_answered * 100) if ch_answered else 0
                         await notify_chapter_complete(current_user.id, chapter_obj.name, accuracy, session)
 
             await session.commit()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _logging.getLogger(__name__).warning("Session completion hooks failed for session %s: %s", session_id, _exc)
+            try:
+                await session.rollback()
+            except Exception:
+                pass
 
     _answered_ids = await session.exec(
         select(CompActivityAnswer.activity_id).where(CompActivityAnswer.session_id == session_id)
     )
     answered_ids = [row[0] if isinstance(row, tuple) else row for row in _answered_ids.all()]
 
-    ps_activity_group_id = session_snapshot.get("activity_group_id")
     if ps_activity_group_id:
         next_query = select(CompChapterActivity).where(
             CompChapterActivity.activity_group_id == ps_activity_group_id,
@@ -1333,20 +1398,20 @@ async def submit_comp_answer(
     next_activity = _next.first()
 
     correct_answer = {
-        "correct_option_index": activity.correct_option_index,
+        "correct_option_index": activity_correct_option_index,
         "correct_option_text": (
-            activity.options[activity.correct_option_index - 1]
-            if activity.options and activity.correct_option_index
+            activity_options[activity_correct_option_index - 1]
+            if activity_options and activity_correct_option_index
             else None
         ),
-        "answer_description": activity.answer_description,
+        "answer_description": activity_answer_description,
     }
 
     return {"data": {
         "is_correct": is_correct,
         "score": score,
         "correct_answer": correct_answer,
-        "answer_image_url": activity.answer_image_url,
+        "answer_image_url": activity_answer_image_url,
         "next_activity": next_activity.dict() if next_activity else None,
         "completed": completed,
         "session": session_snapshot,

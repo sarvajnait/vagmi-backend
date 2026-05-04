@@ -48,15 +48,21 @@ async def send_notification(
     if body.medium_id is not None:
         base_filters.append(User.medium_id == body.medium_id)
 
+    # Fetch all targeted user IDs first — inbox fan-out is independent of FCM
+    user_ids_result = await session.exec(
+        select(User.id).where(*base_filters) if base_filters else select(User.id)
+    )
+    all_user_ids = user_ids_result.all()
+
+    if not all_user_ids:
+        raise HTTPException(status_code=404, detail="No users found for the given filters")
+
+    # L-4: FCM push is best-effort — inbox always written even if no tokens
     token_result = await session.exec(
         select(User.fcm_token).where(User.fcm_token.is_not(None), *base_filters)
     )
     tokens = [t for t in token_result.all() if t]
-
-    if not tokens:
-        raise HTTPException(status_code=404, detail="No users with FCM tokens found for the given filters")
-
-    sent_count = send_multicast(tokens, title=body.title, body=body.body)
+    sent_count = send_multicast(tokens, title=body.title, body=body.body) if tokens else 0
 
     # Persist broadcast log
     notification = Notification(
@@ -70,25 +76,25 @@ async def send_notification(
     )
     session.add(notification)
 
-    # Fan-out: write UserNotification inbox row for every targeted user
-    user_ids_result = await session.exec(
-        select(User.id).where(*base_filters) if base_filters else select(User.id)
-    )
-    for uid in user_ids_result.all():
-        session.add(UserNotification(
+    # L-3: bulk insert inbox rows
+    session.add_all([
+        UserNotification(
             user_id=uid,
             title=body.title,
             body=body.body,
             notif_type="admin_broadcast",
             icon_emoji="📢",
-        ))
+        )
+        for uid in all_user_ids
+    ])
 
     await session.commit()
 
     return {
-        "message": f"Notification sent to {sent_count}/{len(tokens)} devices",
+        "message": f"Notification sent to {sent_count}/{len(tokens)} devices" if tokens else "Saved to inbox (no FCM tokens found)",
         "sent_count": sent_count,
         "total_tokens": len(tokens),
+        "inbox_recipients": len(all_user_ids),
     }
 
 

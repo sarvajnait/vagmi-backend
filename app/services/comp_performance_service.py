@@ -398,19 +398,39 @@ async def get_performance_dashboard(user_id: int, db: AsyncSession, level_id: Op
         if sid:
             total_groups_per_subject[sid] = total_groups_per_subject.get(sid, 0) + 1
 
-    # Answered groups: groups where user has at least one answer
-    answered_groups_result = await db.exec(
-        select(CompChapterActivity.activity_group_id).distinct()
+    # M-9: completed groups = groups where distinct answered >= total published questions
+    group_answered_result = await db.exec(
+        select(
+            CompChapterActivity.activity_group_id,
+            func.count(func.distinct(CompActivityAnswer.activity_id)).label("answered"),
+        )
         .join(CompActivityAnswer, CompActivityAnswer.activity_id == CompChapterActivity.id)
         .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
         .where(
             CompActivityPlaySession.user_id == user_id,
             CompChapterActivity.comp_chapter_id.in_(chapter_ids),
+            CompChapterActivity.is_published == True,
         )
+        .group_by(CompChapterActivity.activity_group_id)
     )
-    answered_group_ids = {row for row in answered_groups_result.all()}
+    group_answered_map = {row[0]: row[1] for row in group_answered_result.all() if row[0]}
+
+    group_total_result = await db.exec(
+        select(CompChapterActivity.activity_group_id, func.count(CompChapterActivity.id))
+        .where(
+            CompChapterActivity.activity_group_id.in_(list(group_answered_map.keys())),
+            CompChapterActivity.is_published == True,
+        )
+        .group_by(CompChapterActivity.activity_group_id)
+    )
+    group_total_map = {row[0]: row[1] for row in group_total_result.all()}
+
+    completed_group_ids = {
+        gid for gid, answered in group_answered_map.items()
+        if answered >= group_total_map.get(gid, float("inf"))
+    }
     done_groups_per_subject: dict[int, int] = {}
-    for gid in answered_group_ids:
+    for gid in completed_group_ids:
         sid = group_to_subject.get(gid)
         if sid:
             done_groups_per_subject[sid] = done_groups_per_subject.get(sid, 0) + 1
