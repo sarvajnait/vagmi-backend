@@ -140,4 +140,4 @@ When a `CompActivityPlaySession` completes (in `submit_comp_answer`), it automat
 
 ### Push Notifications
 
-FCM is wired up in `app/services/fcm_service.py`. Users register their token via `POST /users/fcm-token`. Admin broadcast: `POST /admin/notifications/send`. There is **no per-user notification inbox** yet — only a broadcast history table.
+FCM is wired up in `app/services/fcm_service.py`. Users register their token via `POST /users/fcm-token`. Admin broadcast: `POST /admin/notifications/send` (fans out to every targeted user's inbox). Per-user inbox: `GET /comp/student/notifications` with Today/Yesterday/Earlier grouping, unread count, and mark-read endpoints. Notifications are also triggered automatically on milestone achieved and wrong-answer count ≥ 5.
