@@ -26,26 +26,42 @@ async def get_subject_chapters(user_id: int, subject_id: int, db: AsyncSession) 
     )
     chapters = chapters_result.all()
 
-    # Aggregate per-chapter stats from sessions
     chapter_ids = [c.id for c in chapters]
+
+    # Distinct questions answered per chapter (replay-safe)
+    distinct_result = await db.exec(
+        select(
+            CompChapterActivity.comp_chapter_id,
+            func.count(func.distinct(CompActivityAnswer.activity_id)).label("answered"),
+            func.count(func.distinct(
+                case((CompActivityAnswer.is_correct == True, CompActivityAnswer.activity_id), else_=None)
+            )).label("correct"),
+        )
+        .join(CompActivityAnswer, CompActivityAnswer.activity_id == CompChapterActivity.id)
+        .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
+        .where(
+            CompActivityPlaySession.user_id == user_id,
+            CompChapterActivity.comp_chapter_id.in_(chapter_ids),
+        )
+        .group_by(CompChapterActivity.comp_chapter_id)
+    )
+    chapter_stats: dict[int, dict] = {
+        row[0]: {"answered": row[1], "correct": row[2], "last_at": None}
+        for row in distinct_result.all()
+    }
+
+    # last_active_at still comes from sessions
     sessions_result = await db.exec(
-        select(CompActivityPlaySession).where(
+        select(CompActivityPlaySession.comp_chapter_id, CompActivityPlaySession.completed_at).where(
             CompActivityPlaySession.user_id == user_id,
             CompActivityPlaySession.comp_chapter_id.in_(chapter_ids),
+            CompActivityPlaySession.completed_at.is_not(None),
         )
     )
-    sessions = sessions_result.all()
-
-    # Build per-chapter progress map: chapter_id -> {correct, total, last_at}
-    chapter_stats: dict[int, dict] = {}
-    for s in sessions:
-        cid = s.comp_chapter_id
-        if cid not in chapter_stats:
-            chapter_stats[cid] = {"correct": 0, "answered": 0, "last_at": None}
-        chapter_stats[cid]["correct"] += s.correct_count
-        chapter_stats[cid]["answered"] += (s.total_questions if s.status == "completed" else 0)
-        if s.completed_at and (chapter_stats[cid]["last_at"] is None or s.completed_at > chapter_stats[cid]["last_at"]):
-            chapter_stats[cid]["last_at"] = s.completed_at
+    for cid, completed_at in sessions_result.all():
+        if cid in chapter_stats:
+            if chapter_stats[cid]["last_at"] is None or completed_at > chapter_stats[cid]["last_at"]:
+                chapter_stats[cid]["last_at"] = completed_at
 
     # Total published questions per chapter
     q_counts_result = await db.exec(
@@ -156,13 +172,14 @@ async def get_chapter_detail(user_id: int, chapter_id: int, db: AsyncSession) ->
     )
     q_counts = {row[0]: row[1] for row in q_counts_result.all()}
 
-    # User answers per group: count correct, count answered
-    # Join answers → activities to get group
+    # Distinct questions answered/correct per group (replay-safe)
     user_answers_result = await db.exec(
         select(
             CompChapterActivity.activity_group_id,
-            func.count(CompActivityAnswer.id).label("answered"),
-            func.sum(case((CompActivityAnswer.is_correct == True, 1), else_=0)).label("correct"),
+            func.count(func.distinct(CompActivityAnswer.activity_id)).label("answered"),
+            func.count(func.distinct(
+                case((CompActivityAnswer.is_correct == True, CompActivityAnswer.activity_id), else_=None)
+            )).label("correct"),
         )
         .join(CompChapterActivity, CompChapterActivity.id == CompActivityAnswer.activity_id)
         .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
@@ -246,7 +263,67 @@ async def get_performance_dashboard(user_id: int, db: AsyncSession, level_id: Op
     if not chapter_ids:
         return _empty_performance()
 
-    # All sessions for this user in scope
+    # Distinct questions answered/correct overall and this week (replay-safe)
+    overall_result = await db.exec(
+        select(
+            func.count(func.distinct(CompActivityAnswer.activity_id)).label("answered"),
+            func.count(func.distinct(
+                case((CompActivityAnswer.is_correct == True, CompActivityAnswer.activity_id), else_=None)
+            )).label("correct"),
+        )
+        .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
+        .where(
+            CompActivityPlaySession.user_id == user_id,
+            CompActivityPlaySession.comp_chapter_id.in_(chapter_ids),
+            CompActivityPlaySession.status == "completed",
+        )
+    )
+    _ov = overall_result.first()
+    total_answered = _ov[0] if _ov else 0
+    total_correct = _ov[1] if _ov else 0
+    accuracy_pct = round(total_correct / total_answered * 100) if total_answered > 0 else 0
+
+    week_result = await db.exec(
+        select(
+            func.count(func.distinct(CompActivityAnswer.activity_id)).label("answered"),
+            func.count(func.distinct(
+                case((CompActivityAnswer.is_correct == True, CompActivityAnswer.activity_id), else_=None)
+            )).label("correct"),
+        )
+        .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
+        .where(
+            CompActivityPlaySession.user_id == user_id,
+            CompActivityPlaySession.comp_chapter_id.in_(chapter_ids),
+            CompActivityPlaySession.status == "completed",
+            CompActivityPlaySession.completed_at >= week_ago,
+        )
+    )
+    _wk = week_result.first()
+    week_answered = _wk[0] if _wk else 0
+    week_correct = _wk[1] if _wk else 0
+
+    prev_result = await db.exec(
+        select(
+            func.count(func.distinct(CompActivityAnswer.activity_id)).label("answered"),
+            func.count(func.distinct(
+                case((CompActivityAnswer.is_correct == True, CompActivityAnswer.activity_id), else_=None)
+            )).label("correct"),
+        )
+        .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
+        .where(
+            CompActivityPlaySession.user_id == user_id,
+            CompActivityPlaySession.comp_chapter_id.in_(chapter_ids),
+            CompActivityPlaySession.status == "completed",
+            CompActivityPlaySession.completed_at < week_ago,
+        )
+    )
+    _pv = prev_result.first()
+    prev_total = _pv[0] if _pv else 0
+    prev_correct = _pv[1] if _pv else 0
+    prev_accuracy = round(prev_correct / prev_total * 100) if prev_total > 0 else 0
+    accuracy_delta_week = accuracy_pct - prev_accuracy
+
+    # Sessions still needed for subject-level breakdown
     sessions_result = await db.exec(
         select(CompActivityPlaySession).where(
             CompActivityPlaySession.user_id == user_id,
@@ -255,20 +332,6 @@ async def get_performance_dashboard(user_id: int, db: AsyncSession, level_id: Op
         )
     )
     sessions = sessions_result.all()
-
-    # Overall stats
-    total_correct = sum(s.correct_count for s in sessions)
-    total_answered = sum(s.total_questions for s in sessions)
-    accuracy_pct = round(total_correct / total_answered * 100) if total_answered > 0 else 0
-
-    week_sessions = [s for s in sessions if s.completed_at and s.completed_at.date() >= week_ago]
-    week_answered = sum(s.total_questions for s in week_sessions)
-    week_correct = sum(s.correct_count for s in week_sessions)
-    accuracy_week_ago_sessions = [s for s in sessions if s.completed_at and s.completed_at.date() < week_ago]
-    prev_total = sum(s.total_questions for s in accuracy_week_ago_sessions)
-    prev_correct = sum(s.correct_count for s in accuracy_week_ago_sessions)
-    prev_accuracy = round(prev_correct / prev_total * 100) if prev_total > 0 else 0
-    accuracy_delta_week = accuracy_pct - prev_accuracy
 
     # Study time
     study_result = await db.exec(
@@ -297,13 +360,31 @@ async def get_performance_dashboard(user_id: int, db: AsyncSession, level_id: Op
     )
     subjects = subjects_result.all()
 
-    # Questions per subject (from sessions)
-    subject_stats: dict[int, dict] = {s.id: {"correct": 0, "answered": 0} for s in subjects}
-    for s in sessions:
-        sid = chapter_subject_map.get(s.comp_chapter_id)
-        if sid:
-            subject_stats[sid]["correct"] += s.correct_count
-            subject_stats[sid]["answered"] += s.total_questions
+    # Distinct questions answered/correct per subject (replay-safe)
+    subject_ids = [s.id for s in subjects]
+    subj_answers_result = await db.exec(
+        select(
+            CompSubject.id,
+            func.count(func.distinct(CompActivityAnswer.activity_id)).label("answered"),
+            func.count(func.distinct(
+                case((CompActivityAnswer.is_correct == True, CompActivityAnswer.activity_id), else_=None)
+            )).label("correct"),
+        )
+        .join(CompChapter, CompChapter.subject_id == CompSubject.id)
+        .join(CompChapterActivity, CompChapterActivity.comp_chapter_id == CompChapter.id)
+        .join(CompActivityAnswer, CompActivityAnswer.activity_id == CompChapterActivity.id)
+        .join(CompActivityPlaySession, CompActivityPlaySession.id == CompActivityAnswer.session_id)
+        .where(
+            CompActivityPlaySession.user_id == user_id,
+            CompActivityPlaySession.status == "completed",
+            CompSubject.id.in_(subject_ids),
+        )
+        .group_by(CompSubject.id)
+    )
+    subject_stats: dict[int, dict] = {
+        row[0]: {"answered": row[1], "correct": row[2]}
+        for row in subj_answers_result.all()
+    }
 
     # Activity groups per subject (topics_done = groups where user answered all questions)
     groups_result = await db.exec(
