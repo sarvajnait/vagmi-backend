@@ -6,6 +6,8 @@ from sqlalchemy import case, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.api.v1.admin.auth import get_current_user as get_current_admin
+from app.models.admin import Admin
 from app.models.mock_tests import (
     MockTest, MockTestCreate, MockTestUpdate, MockTestQuestion, MockTestQuestionCreate, MockTestQuestionUpdate,
 )
@@ -32,7 +34,7 @@ def sort_ordering(model):
 # ============================================================
 
 @router.get("/mock-tests")
-async def get_mock_tests(level_id: Optional[int] = None, session: AsyncSession = Depends(get_session)):
+async def get_mock_tests(level_id: Optional[int] = None, _admin: Admin = Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     query = select(MockTest)
     if level_id is not None:
         query = query.where(MockTest.level_id == level_id)
@@ -52,7 +54,7 @@ async def get_mock_tests(level_id: Optional[int] = None, session: AsyncSession =
 
 
 @router.post("/mock-tests")
-async def create_mock_test(payload: MockTestCreate, session: AsyncSession = Depends(get_session)):
+async def create_mock_test(payload: MockTestCreate, _admin: Admin = Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     try:
         level = await session.get(Level, payload.level_id)
         if not level:
@@ -78,6 +80,7 @@ async def create_mock_test(payload: MockTestCreate, session: AsyncSession = Depe
 async def reorder_mock_tests(
     payload: OrderUpdate,
     level_id: int = Query(...),
+    _admin: Admin = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     if len(payload.ids) != len(set(payload.ids)):
@@ -97,7 +100,7 @@ async def reorder_mock_tests(
 
 
 @router.put("/mock-tests/{test_id}")
-async def update_mock_test(test_id: int, payload: MockTestUpdate, session: AsyncSession = Depends(get_session)):
+async def update_mock_test(test_id: int, payload: MockTestUpdate, _admin: Admin = Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     obj = await session.get(MockTest, test_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Mock test not found")
@@ -110,7 +113,7 @@ async def update_mock_test(test_id: int, payload: MockTestUpdate, session: Async
 
 
 @router.delete("/mock-tests/{test_id}")
-async def delete_mock_test(test_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_mock_test(test_id: int, _admin: Admin = Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     obj = await session.get(MockTest, test_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Mock test not found")
@@ -126,6 +129,7 @@ async def delete_mock_test(test_id: int, session: AsyncSession = Depends(get_ses
 @router.get("/mock-test-questions")
 async def get_mock_test_questions(
     mock_test_id: Optional[int] = None,
+    _admin: Admin = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     query = select(MockTestQuestion)
@@ -137,7 +141,7 @@ async def get_mock_test_questions(
 
 
 @router.post("/mock-test-questions")
-async def create_mock_test_question(payload: MockTestQuestionCreate, session: AsyncSession = Depends(get_session)):
+async def create_mock_test_question(payload: MockTestQuestionCreate, _admin: Admin = Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     try:
         test = await session.get(MockTest, payload.mock_test_id)
         if not test:
@@ -163,6 +167,7 @@ async def create_mock_test_question(payload: MockTestQuestionCreate, session: As
 async def reorder_mock_test_questions(
     payload: OrderUpdate,
     mock_test_id: int = Query(...),
+    _admin: Admin = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     if len(payload.ids) != len(set(payload.ids)):
@@ -186,7 +191,7 @@ async def reorder_mock_test_questions(
 
 @router.put("/mock-test-questions/{question_id}")
 async def update_mock_test_question(
-    question_id: int, payload: MockTestQuestionUpdate, session: AsyncSession = Depends(get_session)
+    question_id: int, payload: MockTestQuestionUpdate, _admin: Admin = Depends(get_current_admin), session: AsyncSession = Depends(get_session)
 ):
     obj = await session.get(MockTestQuestion, question_id)
     if not obj:
@@ -200,7 +205,7 @@ async def update_mock_test_question(
 
 
 @router.delete("/mock-test-questions/{question_id}")
-async def delete_mock_test_question(question_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_mock_test_question(question_id: int, _admin: Admin = Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     obj = await session.get(MockTestQuestion, question_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Question not found")
