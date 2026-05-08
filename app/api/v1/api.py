@@ -29,6 +29,7 @@ from app.api.v1.comp_student_content import router as comp_student_content_route
 from app.api.v1.comp_activities import router as comp_activities_router
 from app.api.v1.mock_tests import router as mock_tests_router
 from app.api.v1.comp_student import router as comp_student_router
+from app.api.v1.test_utils import router as test_utils_router
 
 api_router = APIRouter()
 
@@ -70,6 +71,9 @@ api_router.include_router(comp_student_content_router, prefix="/comp/student", t
 api_router.include_router(comp_student_router, prefix="/comp/student", tags=["competitive-student-features"])
 api_router.include_router(comp_activities_router, prefix="/comp", tags=["competitive-activities"])
 api_router.include_router(mock_tests_router, prefix="/comp", tags=["mock-tests"])
+
+
+api_router.include_router(test_utils_router, prefix="/test", tags=["test-utils"])
 
 
 @api_router.get("/health")
