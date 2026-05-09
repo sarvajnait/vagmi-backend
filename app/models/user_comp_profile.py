@@ -12,7 +12,7 @@ class UserCompProfile(BaseModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        sa_column=Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+        sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
     )
     exam_id: Optional[int] = Field(
         default=None,
@@ -24,7 +24,7 @@ class UserCompProfile(BaseModel, table=True):
     )
     level_id: Optional[int] = Field(
         default=None,
-        sa_column=Column(Integer, ForeignKey("levels.id", ondelete="SET NULL"), nullable=True),
+        sa_column=Column(Integer, ForeignKey("comp_levels.id", ondelete="SET NULL"), nullable=True),
     )
     exam_date: Optional[date] = Field(default=None)
     daily_commitment_hours: Optional[int] = Field(default=None)
