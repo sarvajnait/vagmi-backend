@@ -19,3 +19,4 @@ from .comp_streak import UserStreak, UserStreakDay, UserMilestone  # noqa: F401
 from .comp_wrong_answers import WrongAnswerEntry  # noqa: F401
 from .comp_study_time import StudyTimeLog  # noqa: F401
 from .user_notifications import UserNotification  # noqa: F401
+from .user_comp_profile import UserCompProfile  # noqa: F401

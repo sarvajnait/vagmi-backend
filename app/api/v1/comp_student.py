@@ -16,6 +16,8 @@ from app.models.comp_study_time import StudyTimeLog
 from app.models.comp_wrong_answers import WrongAnswerEntry
 from app.models.user_notifications import UserNotification
 from app.models.user import User
+from app.models.user_comp_profile import UserCompProfile
+from app.models.competitive_hierarchy import ExamCategory, Exam, CompExamMedium, Level
 from app.services.comp_performance_service import (
     get_chapter_detail, get_subject_chapters, get_performance_dashboard,
 )
@@ -386,3 +388,157 @@ async def mark_all_notifications_read(
         count += 1
     await session.commit()
     return {"data": {"updated": count}}
+
+
+# ============================================================
+# Hierarchy — Read-Only (for onboarding dropdowns)
+# ============================================================
+
+@router.get("/exam-categories")
+async def list_exam_categories(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.exec(
+        select(ExamCategory).order_by(
+            case((ExamCategory.sort_order == None, 1), else_=0),
+            ExamCategory.sort_order,
+            ExamCategory.name,
+        )
+    )
+    categories = result.all()
+    return {"data": [{"id": c.id, "name": c.name} for c in categories]}
+
+
+@router.get("/exams")
+async def list_exams(
+    category_id: Optional[int] = Query(default=None),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    query = select(Exam)
+    if category_id is not None:
+        query = query.where(Exam.exam_category_id == category_id)
+    query = query.order_by(
+        case((Exam.sort_order == None, 1), else_=0),
+        Exam.sort_order,
+        Exam.name,
+    )
+    result = await session.exec(query)
+    exams = result.all()
+    return {"data": [{"id": e.id, "name": e.name, "exam_category_id": e.exam_category_id} for e in exams]}
+
+
+@router.get("/exam-mediums")
+async def list_exam_mediums(
+    exam_id: int = Query(...),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.exec(
+        select(CompExamMedium)
+        .where(CompExamMedium.exam_id == exam_id)
+        .order_by(
+            case((CompExamMedium.sort_order == None, 1), else_=0),
+            CompExamMedium.sort_order,
+            CompExamMedium.name,
+        )
+    )
+    mediums = result.all()
+    return {"data": [{"id": m.id, "name": m.name, "exam_id": m.exam_id} for m in mediums]}
+
+
+@router.get("/exam-levels")
+async def list_exam_levels(
+    medium_id: int = Query(...),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.exec(
+        select(Level)
+        .where(Level.medium_id == medium_id)
+        .order_by(
+            case((Level.sort_order == None, 1), else_=0),
+            Level.sort_order,
+            Level.name,
+        )
+    )
+    levels = result.all()
+    return {"data": [{"id": l.id, "name": l.name, "medium_id": l.medium_id} for l in levels]}
+
+
+# ============================================================
+# Onboarding
+# ============================================================
+
+class OnboardingPayload(BaseModel):
+    exam_id: Optional[int] = None
+    comp_medium_id: Optional[int] = None
+    level_id: Optional[int] = None
+    exam_date: Optional[date] = None
+    daily_commitment_hours: Optional[int] = None
+
+
+def _build_onboarding_response(profile: UserCompProfile, exam=None, medium=None, level=None) -> dict:
+    days_until_exam = None
+    if profile.exam_date:
+        delta = profile.exam_date - date.today()
+        days_until_exam = max(0, delta.days)
+    return {
+        "exam_id": profile.exam_id,
+        "exam_name": exam.name if exam else None,
+        "comp_medium_id": profile.comp_medium_id,
+        "medium_name": medium.name if medium else None,
+        "level_id": profile.level_id,
+        "level_name": level.name if level else None,
+        "exam_date": profile.exam_date.isoformat() if profile.exam_date else None,
+        "daily_commitment_hours": profile.daily_commitment_hours,
+        "days_until_exam": days_until_exam,
+    }
+
+
+@router.post("/onboarding")
+async def upsert_onboarding(
+    payload: OnboardingPayload,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.exec(
+        select(UserCompProfile).where(UserCompProfile.user_id == current_user.id)
+    )
+    profile = result.first()
+
+    if profile is None:
+        profile = UserCompProfile(user_id=current_user.id)
+
+    for field, value in payload.dict(exclude_unset=True).items():
+        setattr(profile, field, value)
+
+    session.add(profile)
+    await session.commit()
+    await session.refresh(profile)
+
+    exam = await session.get(Exam, profile.exam_id) if profile.exam_id else None
+    medium = await session.get(CompExamMedium, profile.comp_medium_id) if profile.comp_medium_id else None
+    level = await session.get(Level, profile.level_id) if profile.level_id else None
+
+    return {"data": _build_onboarding_response(profile, exam, medium, level)}
+
+
+@router.get("/onboarding")
+async def get_onboarding(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.exec(
+        select(UserCompProfile).where(UserCompProfile.user_id == current_user.id)
+    )
+    profile = result.first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Onboarding not completed")
+
+    exam = await session.get(Exam, profile.exam_id) if profile.exam_id else None
+    medium = await session.get(CompExamMedium, profile.comp_medium_id) if profile.comp_medium_id else None
+    level = await session.get(Level, profile.level_id) if profile.level_id else None
+
+    return {"data": _build_onboarding_response(profile, exam, medium, level)}

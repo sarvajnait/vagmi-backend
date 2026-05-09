@@ -1,6 +1,7 @@
 """This file contains the authentication schema for the application."""
 
 from datetime import datetime, date
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -45,9 +46,9 @@ class UserCreate(BaseModel):
     phone: str = Field(..., description="User's phone number")
     name: str = Field(default=None)  # Added name
     password: str = Field(..., description="User's password")
-    board: int = Field(..., description="Selected board ID")
-    medium: int = Field(..., description="Selected medium ID")
-    grade: int = Field(..., description="Selected grade/class level ID")
+    board: Optional[int] = Field(default=None, description="Selected board ID (academic app only)")
+    medium: Optional[int] = Field(default=None, description="Selected medium ID (academic app only)")
+    grade: Optional[int] = Field(default=None, description="Selected grade/class level ID (academic app only)")
 
 
 class SubscriptionSummary(BaseModel):
@@ -67,9 +68,9 @@ class UserResponse(BaseModel):
     id: int
     phone: str = Field(..., description="User's phone number")
     name: str = Field(default=None)
-    board_id: int
-    medium_id: int
-    class_level_id: int
+    board_id: Optional[int] = None
+    medium_id: Optional[int] = None
+    class_level_id: Optional[int] = None
     dob: date | None = None
     gender: str | None = None
     is_premium: bool = False

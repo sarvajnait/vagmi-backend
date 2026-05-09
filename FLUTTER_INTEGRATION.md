@@ -1,6 +1,6 @@
 # Flutter Integration Guide — Competitive Exam Student Features
 
-All endpoints are prefixed with your base URL + `/api/v1`. Every request requires the JWT bearer token in the `Authorization` header.
+All endpoints are prefixed with your base URL + `/api/v1`. Every request (except auth endpoints) requires the JWT bearer token in the `Authorization` header.
 
 ```
 Authorization: Bearer <token>
@@ -10,6 +10,7 @@ Authorization: Bearer <token>
 
 ## Table of Contents
 
+0. [Auth & Onboarding](#0-auth--onboarding)
 1. [Chapter Progress](#1-chapter-progress)
 2. [MCQ Practice Sessions](#2-mcq-practice-sessions)
 3. [Streak & Calendar](#3-streak--calendar)
@@ -19,6 +20,197 @@ Authorization: Bearer <token>
 7. [Profile Stats](#7-profile-stats)
 8. [Notification Inbox](#8-notification-inbox)
 9. [Typical UI Flows](#9-typical-ui-flows)
+
+---
+
+## 0. Auth & Onboarding
+
+### Phone Check (does user exist?)
+`POST /check-user`  *(no auth header required)*
+
+Request:
+```json
+{ "phone": "9876543210" }
+```
+
+Response:
+```json
+{ "exists": true }
+```
+
+If `exists: false` → show OTP screen to register.
+If `exists: true` → show password login screen.
+
+---
+
+### Send OTP
+`POST /send-otp`  *(no auth header required)*
+
+Request:
+```json
+{ "phone": "9876543210" }
+```
+
+Response:
+```json
+{ "otp_secret": "<base64-secret>" }
+```
+
+Store `otp_secret` — you need it for `/login-otp`.
+
+---
+
+### Verify OTP + Login (new user)
+`POST /login-otp`  *(no auth header required)*
+
+Request:
+```json
+{
+  "phone": "9876543210",
+  "otp": "123456",
+  "otp_secret": "<base64-secret>"
+}
+```
+
+Response: `AuthResponse` (see Register below for shape).
+
+---
+
+### Register (new user — after OTP verified)
+`POST /register`  *(no auth header required)*
+
+For competitive app users, **do not send** `board`, `medium`, or `grade` — those are for the academic app only.
+
+Request:
+```json
+{
+  "phone": "9876543210",
+  "name": "Rajesh Kumar",
+  "password": "SecurePass123"
+}
+```
+
+Response:
+```json
+{
+  "user": {
+    "id": 42,
+    "phone": "9876543210",
+    "name": "Rajesh Kumar",
+    "board_id": null,
+    "medium_id": null,
+    "class_level_id": null,
+    "is_premium": false,
+    "subscription": null
+  },
+  "tokens": {
+    "access_token": "<jwt>",
+    "refresh_token": "<jwt>",
+    "token_type": "bearer",
+    "expires_at": "2026-06-09T00:00:00Z",
+    "refresh_expires_at": "2026-06-09T00:00:00Z"
+  }
+}
+```
+
+Store both tokens. Use `access_token` in the `Authorization` header for all subsequent requests.
+
+---
+
+### Password Login (returning user)
+`POST /login`  *(no auth header required)*
+
+Request:
+```json
+{ "username": "9876543210", "password": "SecurePass123" }
+```
+
+Response: same `AuthResponse` shape as Register.
+
+---
+
+### Refresh Token
+`POST /refresh`
+
+Use `refresh_token` as the Bearer token for this request only.
+
+Response: new `AuthResponse` with fresh tokens.
+
+---
+
+### Onboarding Flow (after first login/register)
+
+After login, call `GET /comp/student/onboarding`. If it returns `404`, the user hasn't completed onboarding — show the onboarding screens.
+
+**Step 1 — Get exam categories**
+`GET /comp/student/exam-categories`
+
+Response:
+```json
+{ "data": [{ "id": 1, "name": "Teaching Entrance Exam" }, ...] }
+```
+
+**Step 2 — Get exams for selected category**
+`GET /comp/student/exams?category_id=1`
+
+Response:
+```json
+{ "data": [{ "id": 1, "name": "CTET", "exam_category_id": 1 }, { "id": 2, "name": "UPTET", "exam_category_id": 1 }] }
+```
+
+**Step 3 — Get mediums for selected exam**
+`GET /comp/student/exam-mediums?exam_id=1`
+
+Response:
+```json
+{ "data": [{ "id": 1, "name": "English", "exam_id": 1 }, { "id": 2, "name": "Hindi", "exam_id": 1 }] }
+```
+
+**Step 4 — Get papers/levels for selected medium**
+`GET /comp/student/exam-levels?medium_id=1`
+
+Response:
+```json
+{ "data": [{ "id": 1, "name": "Paper 1", "medium_id": 1 }, { "id": 2, "name": "Paper 2", "medium_id": 1 }] }
+```
+
+**Step 5 — Save onboarding (upsert)**
+`POST /comp/student/onboarding`
+
+All fields are optional — you can save in multiple steps or all at once.
+
+Request:
+```json
+{
+  "exam_id": 1,
+  "comp_medium_id": 2,
+  "level_id": 3,
+  "exam_date": "2025-12-15",
+  "daily_commitment_hours": 4
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "exam_id": 1,
+    "exam_name": "CTET",
+    "comp_medium_id": 2,
+    "medium_name": "Hindi",
+    "level_id": 3,
+    "level_name": "Paper 1",
+    "exam_date": "2025-12-15",
+    "daily_commitment_hours": 4,
+    "days_until_exam": 220
+  }
+}
+```
+
+**Get onboarding profile (any time)**
+`GET /comp/student/onboarding`
+
+Returns same shape as POST response. Returns `404` if onboarding not done yet — use this to gate the home screen.
 
 ---
 
