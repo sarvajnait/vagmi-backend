@@ -11,6 +11,7 @@ Authorization: Bearer <token>
 ## Table of Contents
 
 0. [Auth & Onboarding](#0-auth--onboarding)
+0.5. [Push Notifications — FCM Setup](#05-push-notifications--fcm-setup)
 1. [Chapter Progress](#1-chapter-progress)
 2. [MCQ Practice Sessions](#2-mcq-practice-sessions)
 3. [Streak & Calendar](#3-streak--calendar)
@@ -211,6 +212,225 @@ Response:
 `GET /comp/student/onboarding`
 
 Returns same shape as POST response. Returns `404` if onboarding not done yet — use this to gate the home screen.
+
+---
+
+## 0.5. Push Notifications — FCM Setup
+
+This covers the Flutter-side wiring. The backend already handles FCM delivery via Firebase Admin SDK — you only need to set up the receiving side.
+
+### 1. Dependencies
+
+```yaml
+# pubspec.yaml
+dependencies:
+  firebase_core: ^3.x.x
+  firebase_messaging: ^15.x.x
+  flutter_local_notifications: ^18.x.x
+```
+
+Run `flutter pub get` after adding.
+
+---
+
+### 2. Firebase Project Setup
+
+1. Go to [Firebase Console](https://console.firebase.google.com) → your project → Project Settings → "Your apps"
+2. Download `google-services.json` (Android) → place in `android/app/`
+3. Download `GoogleService-Info.plist` (iOS) → place in `ios/Runner/`
+4. Follow the `firebase_core` FlutterFire setup steps if not already done (`flutterfire configure`)
+
+---
+
+### 3. Android — required config
+
+In `android/app/build.gradle`:
+```gradle
+apply plugin: 'com.google.gms.google-services'
+```
+
+In `android/build.gradle` (project-level):
+```gradle
+dependencies {
+    classpath 'com.google.gms:google-services:4.4.x'
+}
+```
+
+For high-priority (heads-up) notifications on Android 13+, add to `AndroidManifest.xml`:
+```xml
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+```
+
+---
+
+### 4. iOS — required config
+
+In `ios/Runner/AppDelegate.swift`:
+```swift
+import UIKit
+import Flutter
+import FirebaseCore
+
+@UIApplicationMain
+@objc class AppDelegate: FlutterAppDelegate {
+  override func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+  ) -> Bool {
+    FirebaseApp.configure()
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+}
+```
+
+In Xcode → Runner → Signing & Capabilities → add **Push Notifications** and **Background Modes → Remote notifications**.
+
+---
+
+### 5. Background message handler
+
+Must be a top-level function (not inside a class), annotated with `@pragma`:
+
+```dart
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  // FCM already shows the notification automatically when app is in background/killed.
+  // Only use this for silent data-only messages or local side effects.
+}
+```
+
+Register it in `main()` **before** `runApp`:
+
+```dart
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  runApp(const MyApp());
+}
+```
+
+---
+
+### 6. Request permission + get token
+
+Call this once after the user logs in (e.g. in your auth state listener or home screen `initState`):
+
+```dart
+Future<void> initFCM() async {
+  // 1. Request permission (required on iOS, Android 13+)
+  final settings = await FirebaseMessaging.instance.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
+  if (settings.authorizationStatus != AuthorizationStatus.authorized) {
+    return; // User denied — skip token registration
+  }
+
+  // 2. Get token and register with backend
+  final token = await FirebaseMessaging.instance.getToken();
+  if (token != null) {
+    await registerFCMToken(token);
+  }
+
+  // 3. Re-register if token rotates
+  FirebaseMessaging.instance.onTokenRefresh.listen(registerFCMToken);
+}
+
+Future<void> registerFCMToken(String token) async {
+  await apiClient.post('/users/fcm-token', data: {'fcm_token': token});
+}
+```
+
+`POST /users/fcm-token` — requires JWT auth header.
+
+Request:
+```json
+{ "fcm_token": "<device-fcm-token>" }
+```
+
+Response:
+```json
+{ "message": "FCM token updated" }
+```
+
+---
+
+### 7. Foreground messages (show banner while app is open)
+
+FCM does **not** show a visual notification when the app is in the foreground. You need `flutter_local_notifications` for this.
+
+```dart
+// Set up local notifications channel (do this once in main/initState)
+const AndroidNotificationChannel channel = AndroidNotificationChannel(
+  'vagmi_high_importance', // must match channel ID used below
+  'Vagmi Notifications',
+  importance: Importance.high,
+);
+
+final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+await flutterLocalNotificationsPlugin
+    .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+    ?.createNotificationChannel(channel);
+
+// Listen for foreground messages
+FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+  final notification = message.notification;
+  if (notification == null) return;
+
+  flutterLocalNotificationsPlugin.show(
+    notification.hashCode,
+    notification.title,
+    notification.body,
+    NotificationDetails(
+      android: AndroidNotificationDetails(
+        channel.id,
+        channel.name,
+        icon: '@mipmap/ic_launcher',
+      ),
+    ),
+  );
+});
+```
+
+---
+
+### 8. Handle notification tap (open app from background/killed)
+
+```dart
+// App opened by tapping a notification while in background
+FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+  _navigateToInbox();
+});
+
+// App was killed — check if launched from a notification tap
+final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+if (initialMessage != null) {
+  _navigateToInbox();
+}
+
+void _navigateToInbox() {
+  // Navigate to notification inbox screen
+  router.push('/notifications');
+}
+```
+
+---
+
+### 9. Summary — what triggers a push notification
+
+| Event | Who triggers | Backend call |
+|-------|-------------|--------------|
+| Admin broadcast | Admin panel → Notifications page | `POST /admin/notifications/send` |
+| Milestone unlocked (7-day streak etc.) | Auto on session complete | Internal — no Flutter action needed |
+| Wrong answer reminder (≥5 unmastered) | Auto on session complete | Internal — no Flutter action needed |
+| Chapter complete | Auto on session complete | Internal — no Flutter action needed |
+
+All events also write to the in-app inbox (`GET /comp/student/notifications`) — so even if the push is missed, the user sees it in the bell icon.
 
 ---
 

@@ -12,6 +12,7 @@ from app.api.v1.admin.auth import get_current_user
 from app.models import User
 from app.models.notifications import Notification
 from app.models.user_notifications import UserNotification
+from app.models.user_comp_profile import UserCompProfile
 from app.services.database import get_session
 from app.services.fcm_service import send_multicast
 
@@ -21,10 +22,14 @@ router = APIRouter()
 class SendNotificationRequest(BaseModel):
     title: str
     body: str
-    # Optional filters — omit to send to ALL users
+    # Academic filters
     class_level_id: Optional[int] = None
     board_id: Optional[int] = None
     medium_id: Optional[int] = None
+    # Competitive filters
+    exam_id: Optional[int] = None
+    comp_medium_id: Optional[int] = None
+    level_id: Optional[int] = None
 
 
 @router.post("/send")
@@ -36,31 +41,60 @@ async def send_notification(
     """
     Send a push notification to users with FCM tokens.
 
-    Optionally filter by class_level_id, board_id, medium_id.
-    Omitting all filters sends to every user who has a token.
+    Supply academic filters (class_level_id, board_id, medium_id) to target
+    academic app users, or competitive filters (exam_id, comp_medium_id,
+    level_id) to target comp app users. Omit all filters to send to everyone.
     """
-    # Build filter list — for tokens (must have fcm_token) and for inbox fan-out (all matching users)
-    base_filters = []
-    if body.class_level_id is not None:
-        base_filters.append(User.class_level_id == body.class_level_id)
-    if body.board_id is not None:
-        base_filters.append(User.board_id == body.board_id)
-    if body.medium_id is not None:
-        base_filters.append(User.medium_id == body.medium_id)
+    is_comp = any([body.exam_id, body.comp_medium_id, body.level_id])
 
-    # Fetch all targeted user IDs first — inbox fan-out is independent of FCM
-    user_ids_result = await session.exec(
-        select(User.id).where(*base_filters) if base_filters else select(User.id)
-    )
+    if is_comp:
+        # Target comp users via user_comp_profiles join
+        query = select(User.id).join(UserCompProfile, User.id == UserCompProfile.user_id)
+        if body.exam_id is not None:
+            query = query.where(UserCompProfile.exam_id == body.exam_id)
+        if body.comp_medium_id is not None:
+            query = query.where(UserCompProfile.comp_medium_id == body.comp_medium_id)
+        if body.level_id is not None:
+            query = query.where(UserCompProfile.level_id == body.level_id)
+    else:
+        # Target academic users directly on User table
+        filters = []
+        if body.class_level_id is not None:
+            filters.append(User.class_level_id == body.class_level_id)
+        if body.board_id is not None:
+            filters.append(User.board_id == body.board_id)
+        if body.medium_id is not None:
+            filters.append(User.medium_id == body.medium_id)
+        query = select(User.id).where(*filters) if filters else select(User.id)
+
+    user_ids_result = await session.exec(query)
     all_user_ids = user_ids_result.all()
 
     if not all_user_ids:
         raise HTTPException(status_code=404, detail="No users found for the given filters")
 
-    # L-4: FCM push is best-effort — inbox always written even if no tokens
-    token_result = await session.exec(
-        select(User.fcm_token).where(User.fcm_token.is_not(None), *base_filters)
-    )
+    # FCM push — best-effort, inbox always written
+    if is_comp:
+        token_query = select(User.fcm_token).join(
+            UserCompProfile, User.id == UserCompProfile.user_id
+        ).where(User.fcm_token.is_not(None))
+        if body.exam_id is not None:
+            token_query = token_query.where(UserCompProfile.exam_id == body.exam_id)
+        if body.comp_medium_id is not None:
+            token_query = token_query.where(UserCompProfile.comp_medium_id == body.comp_medium_id)
+        if body.level_id is not None:
+            token_query = token_query.where(UserCompProfile.level_id == body.level_id)
+    else:
+        filters = []
+        if body.class_level_id is not None:
+            filters.append(User.class_level_id == body.class_level_id)
+        if body.board_id is not None:
+            filters.append(User.board_id == body.board_id)
+        if body.medium_id is not None:
+            filters.append(User.medium_id == body.medium_id)
+        token_query = select(User.fcm_token).where(User.fcm_token.is_not(None), *filters)
+
+    token_result = await session.exec(token_query)
     tokens = [t for t in token_result.all() if t]
     sent_count = send_multicast(tokens, title=body.title, body=body.body) if tokens else 0
 
@@ -71,12 +105,14 @@ async def send_notification(
         class_level_id=body.class_level_id,
         board_id=body.board_id,
         medium_id=body.medium_id,
+        exam_id=body.exam_id,
+        comp_medium_id=body.comp_medium_id,
+        level_id=body.level_id,
         sent_count=sent_count,
         sent_at=datetime.now(tz=timezone.utc),
     )
     session.add(notification)
 
-    # L-3: bulk insert inbox rows
     session.add_all([
         UserNotification(
             user_id=uid,
@@ -117,6 +153,9 @@ async def notification_history(
                 "class_level_id": n.class_level_id,
                 "board_id": n.board_id,
                 "medium_id": n.medium_id,
+                "exam_id": n.exam_id,
+                "comp_medium_id": n.comp_medium_id,
+                "level_id": n.level_id,
                 "sent_count": n.sent_count,
                 "sent_at": n.sent_at,
             }
