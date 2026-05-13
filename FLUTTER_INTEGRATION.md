@@ -21,6 +21,7 @@ Authorization: Bearer <token>
 7. [Profile Stats](#7-profile-stats)
 8. [Notification Inbox](#8-notification-inbox)
 9. [Typical UI Flows](#9-typical-ui-flows)
+10. [Previous Year Papers](#10-previous-year-papers)
 
 ---
 
@@ -341,7 +342,7 @@ Future<void> initFCM() async {
 }
 
 Future<void> registerFCMToken(String token) async {
-  await apiClient.post('/users/fcm-token', data: {'fcm_token': token});
+  await apiClient.post('/users/fcm-token', data: {'token': token});
 }
 ```
 
@@ -907,6 +908,48 @@ Poll or call on app resume to update the bell badge.
 ```json
 { "data": { "updated": 5 } }
 ```
+
+---
+
+## 10. Previous Year Papers
+
+Papers are scoped to a **Level** (Paper 1 / Paper 2 etc.) and serve as downloadable PDFs.
+
+### Get papers for a level
+
+`GET /comp/student/pyq?level_id=<id>`
+
+Requires JWT. Returns only enabled papers, sorted by sort_order then year descending.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "title": "CTET 2023 Paper 1",
+      "year": 2023,
+      "num_questions": 150,
+      "num_pages": 28,
+      "file_url": "https://cdn.example.com/comp/levels/3/previous-year-papers/file.pdf",
+      "is_premium": false
+    },
+    {
+      "id": 2,
+      "title": "CTET 2022 Paper 1",
+      "year": 2022,
+      "num_questions": 150,
+      "num_pages": 26,
+      "file_url": "...",
+      "is_premium": true
+    }
+  ]
+}
+```
+
+- `year`, `num_questions`, `num_pages` may be `null` if not filled in by admin
+- `is_premium: true` → gate behind subscription check before opening the PDF
+- `file_url` is a direct DO Spaces URL — open in an in-app PDF viewer or browser
 
 ---
 

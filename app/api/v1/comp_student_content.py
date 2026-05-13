@@ -625,7 +625,9 @@ async def upload_comp_pyp(
     file: UploadFile = File(...),
     level_id: int = Form(...),
     title: str = Form(...),
-    num_pages: int = Form(...),
+    year: Optional[int] = Form(None),
+    num_questions: Optional[int] = Form(None),
+    num_pages: Optional[int] = Form(None),
     is_premium: bool = Form(False),
     enabled: bool = Form(True),
     session: AsyncSession = Depends(get_session),
@@ -642,6 +644,8 @@ async def upload_comp_pyp(
         obj = CompPreviousYearPaper(
             level_id=level_id,
             title=title,
+            year=year,
+            num_questions=num_questions,
             num_pages=num_pages,
             file_url=file_url,
             is_premium=is_premium,
@@ -706,6 +710,8 @@ async def update_comp_pyp(
     paper_id: int,
     file: UploadFile | None = File(None),
     title: Optional[str] = Form(None),
+    year: Optional[int] = Form(None),
+    num_questions: Optional[int] = Form(None),
     num_pages: Optional[int] = Form(None),
     is_premium: Optional[bool] = Form(None),
     enabled: Optional[bool] = Form(None),
@@ -716,6 +722,10 @@ async def update_comp_pyp(
         raise HTTPException(status_code=404, detail="Paper not found")
     if title is not None:
         obj.title = title
+    if year is not None:
+        obj.year = year
+    if num_questions is not None:
+        obj.num_questions = num_questions
     if num_pages is not None:
         obj.num_pages = num_pages
     if is_premium is not None:

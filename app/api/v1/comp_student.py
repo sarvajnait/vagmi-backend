@@ -18,6 +18,7 @@ from app.models.user_notifications import UserNotification
 from app.models.user import User
 from app.models.user_comp_profile import UserCompProfile
 from app.models.competitive_hierarchy import ExamCategory, Exam, CompExamMedium, Level
+from app.models.comp_student_content import CompPreviousYearPaper
 from app.services.comp_performance_service import (
     get_chapter_detail, get_subject_chapters, get_performance_dashboard,
 )
@@ -542,3 +543,43 @@ async def get_onboarding(
     level = await session.get(Level, profile.level_id) if profile.level_id else None
 
     return {"data": _build_onboarding_response(profile, exam, medium, level)}
+
+
+# ============================================================
+# Previous Year Papers (student-facing, read-only)
+# ============================================================
+
+@router.get("/pyq")
+async def get_pyq(
+    level_id: int = Query(...),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Return enabled previous year papers for a level."""
+    result = await session.exec(
+        select(CompPreviousYearPaper)
+        .where(
+            CompPreviousYearPaper.level_id == level_id,
+            CompPreviousYearPaper.enabled == True,
+        )
+        .order_by(
+            case((CompPreviousYearPaper.sort_order == None, 1), else_=0),
+            CompPreviousYearPaper.sort_order,
+            CompPreviousYearPaper.year.desc().nulls_last(),
+        )
+    )
+    papers = result.all()
+    return {
+        "data": [
+            {
+                "id": p.id,
+                "title": p.title,
+                "year": p.year,
+                "num_questions": p.num_questions,
+                "num_pages": p.num_pages,
+                "file_url": p.file_url,
+                "is_premium": p.is_premium,
+            }
+            for p in papers
+        ]
+    }

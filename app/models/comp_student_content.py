@@ -128,7 +128,9 @@ class CompPreviousYearPaperBase(SQLModel):
         sa_column=Column(Integer, ForeignKey("comp_levels.id", ondelete="CASCADE"), nullable=False, index=True)
     )
     title: str
-    num_pages: int
+    year: Optional[int] = Field(default=None)
+    num_questions: Optional[int] = Field(default=None)
+    num_pages: Optional[int] = Field(default=None)
     file_url: str
     is_premium: bool = Field(default=False)
     enabled: bool = Field(default=True)
@@ -153,6 +155,8 @@ class CompPreviousYearPaperRead(CompPreviousYearPaperBase):
 class CompPreviousYearPaperUpdate(SQLModel):
     level_id: Optional[int] = None
     title: Optional[str] = None
+    year: Optional[int] = None
+    num_questions: Optional[int] = None
     num_pages: Optional[int] = None
     file_url: Optional[str] = None
     is_premium: Optional[bool] = None
