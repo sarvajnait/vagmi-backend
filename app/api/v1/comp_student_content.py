@@ -474,6 +474,10 @@ async def regenerate_comp_note_markdown(
     if note.content_status == "processing":
         raise HTTPException(status_code=409, detail="Conversion already in progress")
 
+    # Backfill source for notes uploaded before the field existed
+    source = note.source or _note_source(note.original_filename or note.file_url or "")
+    note.source = source
+
     note.content_status = "processing"
     note.content = None
     note.word_count = None
@@ -485,7 +489,7 @@ async def regenerate_comp_note_markdown(
     job = ActivityGenerationJob(
         job_type="comp_notes_convert",
         status="pending",
-        payload={"note_id": note.id, "file_url": note.file_url, "source": note.source},
+        payload={"note_id": note.id, "file_url": note.file_url, "source": source},
     )
     session.add(job)
     await session.commit()
