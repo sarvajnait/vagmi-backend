@@ -9,7 +9,7 @@ from app.models.comp_student_content import (
     CompStudentTextbook, CompStudentNote, CompStudentVideo, CompPreviousYearPaper,
 )
 from app.models import ActivityGenerationJob
-from app.api.v1.admin.auth import get_current_user as get_current_admin
+
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do, delete_prefix_from_do
 
@@ -46,7 +46,7 @@ async def upload_comp_student_textbook(
     sub_chapter_id: Optional[int] = Form(None),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -110,7 +110,7 @@ async def upload_comp_student_textbook(
 async def get_comp_student_textbooks(
     comp_chapter_id: Optional[int] = None,
     sub_chapter_id: Optional[int] = None,
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -131,7 +131,7 @@ async def reorder_comp_student_textbooks(
     payload: OrderUpdate,
     comp_chapter_id: Optional[int] = Query(None),
     sub_chapter_id: Optional[int] = Query(None),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     filter_col = CompStudentTextbook.comp_chapter_id if comp_chapter_id else CompStudentTextbook.sub_chapter_id
@@ -172,7 +172,7 @@ async def update_comp_student_textbook(
     file: UploadFile | None = File(None),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -253,7 +253,7 @@ async def upload_comp_student_note(
     title: str = Form(...),
     description: Optional[str] = Form(None),
     language: str = Form("en"),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -319,7 +319,7 @@ async def upload_comp_student_note(
 async def get_comp_student_notes(
     comp_chapter_id: Optional[int] = None,
     sub_chapter_id: Optional[int] = None,
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     query = select(CompStudentNote)
@@ -348,7 +348,7 @@ async def reorder_comp_student_notes(
     payload: OrderUpdate,
     comp_chapter_id: Optional[int] = Query(None),
     sub_chapter_id: Optional[int] = Query(None),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     filter_col = CompStudentNote.comp_chapter_id if comp_chapter_id else CompStudentNote.sub_chapter_id
@@ -399,7 +399,7 @@ async def update_comp_student_note(
     description: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     is_published: Optional[bool] = Form(None),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -464,7 +464,7 @@ async def update_comp_student_note(
 async def regenerate_comp_note_markdown(
     note_id: int,
     background_tasks: BackgroundTasks,
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     """Admin: re-trigger markdown conversion for an existing note using its stored file."""
@@ -508,7 +508,7 @@ async def regenerate_comp_note_markdown(
 async def generate_comp_note_audio(
     note_id: int,
     background_tasks: BackgroundTasks,
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     """Admin: enqueue ElevenLabs audio generation with word-level sync for a published note."""
@@ -549,7 +549,7 @@ async def upload_comp_student_video(
     sub_chapter_id: Optional[int] = Form(None),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -588,7 +588,7 @@ async def upload_comp_student_video(
 async def get_comp_student_videos(
     comp_chapter_id: Optional[int] = None,
     sub_chapter_id: Optional[int] = None,
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     query = select(CompStudentVideo)
@@ -619,7 +619,7 @@ async def update_comp_student_video(
     file: UploadFile | None = File(None),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     video = await session.get(CompStudentVideo, video_id)
@@ -656,7 +656,7 @@ async def upload_comp_pyp(
     num_pages: Optional[int] = Form(None),
     is_premium: bool = Form(False),
     enabled: bool = Form(True),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -704,7 +704,7 @@ async def get_comp_pyps(level_id: Optional[int] = None, _admin=Depends(get_curre
 async def reorder_comp_pyps(
     payload: OrderUpdate,
     level_id: int = Query(...),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     _result = await session.exec(
@@ -743,7 +743,7 @@ async def update_comp_pyp(
     num_pages: Optional[int] = Form(None),
     is_premium: Optional[bool] = Form(None),
     enabled: Optional[bool] = Form(None),
-    _admin=Depends(get_current_admin),
+
     session: AsyncSession = Depends(get_session),
 ):
     obj = await session.get(CompPreviousYearPaper, paper_id)
