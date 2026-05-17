@@ -229,7 +229,7 @@ async def get_chapter_detail(user_id: int, chapter_id: int, db: AsyncSession) ->
             CompStudentNote.is_published == True,
         )
     )
-    notes = [{"id": n.id, "title": n.title, "language": n.language, "file_url": n.file_url} for n in notes_result.all()]
+    notes = [{"id": n.id, "title": n.title, "description": n.description, "language": n.language, "file_url": n.file_url, "word_count": n.word_count, "read_time_min": n.read_time_min, "version": n.version} for n in notes_result.all()]
 
     videos_result = await db.exec(
         select(CompStudentVideo).where(CompStudentVideo.comp_chapter_id == chapter_id)

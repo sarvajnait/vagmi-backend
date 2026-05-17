@@ -22,6 +22,7 @@ Authorization: Bearer <token>
 8. [Notification Inbox](#8-notification-inbox)
 9. [Typical UI Flows](#9-typical-ui-flows)
 10. [Previous Year Papers](#10-previous-year-papers)
+11. [Notes Reader](#11-notes-reader)
 
 ---
 
@@ -488,7 +489,7 @@ Response:
         "status": "completed"
       }
     ],
-    "notes": [ { "id": 1, "title": "Notes PDF", "file_url": "..." } ],
+    "notes": [ { "id": 1, "title": "Notes PDF", "description": null, "language": "hi", "file_url": "...", "word_count": 3200, "read_time_min": 13, "version": 1 } ],
     "videos": [ { "id": 2, "title": "Concept Video", "video_url": "..." } ]
   }
 }
@@ -953,6 +954,117 @@ Response:
 
 ---
 
+## 11. Notes Reader
+
+Notes are Markdown documents (converted from .docx/.xlsx by the backend). Each note may optionally have an audio file for a read-along experience.
+
+### Step 1 — Note list (already in chapter detail)
+
+The chapter detail response (`GET /comp/student/chapters/{chapter_id}`) already includes the notes list — no separate API call needed:
+
+```json
+"notes": [
+  {
+    "id": 1,
+    "title": "Child Development",
+    "description": "CDP notes for Paper 1",
+    "language": "hi",
+    "file_url": "...",
+    "word_count": 3200,
+    "read_time_min": 13,
+    "version": 2
+  }
+]
+```
+
+Use `read_time_min` to show "13 min read" on the list card. Render these as cards on the chapter detail screen. When the user taps one, proceed to Step 2.
+
+---
+
+### Step 2 — Open a note (full content)
+
+`GET /comp/student/notes/published/{note_id}`
+
+Requires JWT.
+
+Response:
+```json
+{
+  "data": {
+    "id": 1,
+    "title": "Child Development",
+    "description": "CDP notes for Paper 1",
+    "language": "hi",
+    "content": "# Child Development\n\n## Introduction\n\nChild development refers to...",
+    "content_status": "completed",
+    "word_count": 3200,
+    "read_time_min": 13,
+    "version": 2,
+    "file_url": "https://cdn.example.com/comp/chapters/5/student-content/notes/file.docx",
+    "audio_url": "https://cdn.example.com/comp/notes/audio/1/audio.mp3",
+    "audio_status": "completed",
+    "is_published": true,
+    "updated_at": "2025-05-10T08:30:00Z"
+  }
+}
+```
+
+Key fields:
+
+| Field | Notes |
+|-------|-------|
+| `content` | Full Markdown string — render with a Markdown widget |
+| `audio_url` | MP3 for read-along — `null` if audio not generated yet |
+| `audio_status` | `"completed"` \| `"processing"` \| `"failed"` \| `null` |
+| `language` | `en`, `hi`, `kn`, `ta`, `te` — use to set text direction / font |
+| `version` | Increments each time the note is regenerated |
+
+> **Returns 404** if the note does not exist or is not published yet.
+
+---
+
+### Rendering the Markdown
+
+Use the [`flutter_markdown`](https://pub.dev/packages/flutter_markdown) package:
+
+```yaml
+# pubspec.yaml
+dependencies:
+  flutter_markdown: ^0.7.3
+```
+
+```dart
+import 'package:flutter_markdown/flutter_markdown.dart';
+
+Markdown(
+  data: note.content,
+  selectable: true,
+)
+```
+
+---
+
+### Audio read-along (optional)
+
+If `audio_url` is present and `audio_status == "completed"`, you can play the audio alongside the text. The audio is a plain MP3 — use `just_audio` or `audioplayers` to play it.
+
+There is no word-timing data returned from the API — the audio narrates the full note content linearly. Play/pause controls are sufficient.
+
+---
+
+### Typical notes flow
+
+```
+GET /comp/student/chapters/{id}
+  → notes[] in response (id + title + language)
+    ↓ user taps a note
+GET /comp/student/notes/published/{note_id}
+  → render content (Markdown widget)
+  → if audio_url present, show play button
+```
+
+---
+
 ## 9. Typical UI Flows
 
 ### Chapter list screen
@@ -960,8 +1072,9 @@ Response:
 2. `last_active_chapter_id` in response — scroll to / highlight the in-progress chapter
 
 ### Chapter detail screen
-1. `GET /comp/student/chapters/{chapter_id}` — render activity groups with accuracy badges
-2. Tap group → `POST /comp/sessions` with `{ "activity_group_id": <id> }` → start MCQ flow
+1. `GET /comp/student/chapters/{chapter_id}` — render activity groups with accuracy badges, notes list, videos list
+2. Tap activity group → `POST /comp/sessions` with `{ "activity_group_id": <id> }` → start MCQ flow
+3. Tap note → `GET /comp/student/notes/published/{note_id}` → render Markdown reader (see Section 11)
 
 ### MCQ practice loop
 ```

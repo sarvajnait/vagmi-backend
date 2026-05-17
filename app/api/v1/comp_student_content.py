@@ -9,6 +9,7 @@ from app.models.comp_student_content import (
     CompStudentTextbook, CompStudentNote, CompStudentVideo, CompPreviousYearPaper,
 )
 from app.models import ActivityGenerationJob
+from app.api.v1.admin.auth import get_current_user as get_current_admin
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do, delete_prefix_from_do
 
@@ -45,6 +46,7 @@ async def upload_comp_student_textbook(
     sub_chapter_id: Optional[int] = Form(None),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -108,6 +110,7 @@ async def upload_comp_student_textbook(
 async def get_comp_student_textbooks(
     comp_chapter_id: Optional[int] = None,
     sub_chapter_id: Optional[int] = None,
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -128,6 +131,7 @@ async def reorder_comp_student_textbooks(
     payload: OrderUpdate,
     comp_chapter_id: Optional[int] = Query(None),
     sub_chapter_id: Optional[int] = Query(None),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     filter_col = CompStudentTextbook.comp_chapter_id if comp_chapter_id else CompStudentTextbook.sub_chapter_id
@@ -145,7 +149,7 @@ async def reorder_comp_student_textbooks(
 
 
 @router.delete("/textbook/{textbook_id}")
-async def delete_comp_student_textbook(textbook_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_comp_student_textbook(textbook_id: int, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     textbook = await session.get(CompStudentTextbook, textbook_id)
     if not textbook:
         raise HTTPException(status_code=404, detail="Textbook not found")
@@ -168,6 +172,7 @@ async def update_comp_student_textbook(
     file: UploadFile | None = File(None),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -246,6 +251,7 @@ async def upload_comp_student_note(
     title: str = Form(...),
     description: Optional[str] = Form(None),
     language: str = Form("en"),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -311,6 +317,7 @@ async def upload_comp_student_note(
 async def get_comp_student_notes(
     comp_chapter_id: Optional[int] = None,
     sub_chapter_id: Optional[int] = None,
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     query = select(CompStudentNote)
@@ -323,39 +330,6 @@ async def get_comp_student_notes(
     return {"data": [r.dict() for r in result.all()]}
 
 
-@router.get("/notes/published")
-async def get_published_comp_notes(
-    comp_chapter_id: Optional[int] = None,
-    sub_chapter_id: Optional[int] = None,
-    language: Optional[str] = None,
-    session: AsyncSession = Depends(get_session),
-):
-    """Student-facing: returns only published notes, without full content (list view)."""
-    query = select(CompStudentNote).where(CompStudentNote.is_published == True)
-    if comp_chapter_id is not None:
-        query = query.where(CompStudentNote.comp_chapter_id == comp_chapter_id)
-    elif sub_chapter_id is not None:
-        query = query.where(CompStudentNote.sub_chapter_id == sub_chapter_id)
-    if language:
-        query = query.where(CompStudentNote.language == language)
-    query = query.order_by(*sort_ordering(CompStudentNote))
-    result = await session.exec(query)
-    notes = result.all()
-    return {
-        "data": [
-            {
-                "id": n.id,
-                "title": n.title,
-                "description": n.description,
-                "language": n.language,
-                "version": n.version,
-                "word_count": n.word_count,
-                "read_time_min": n.read_time_min,
-                "updated_at": n.updated_at,
-            }
-            for n in notes
-        ]
-    }
 
 
 @router.get("/notes/published/{note_id}")
@@ -372,6 +346,7 @@ async def reorder_comp_student_notes(
     payload: OrderUpdate,
     comp_chapter_id: Optional[int] = Query(None),
     sub_chapter_id: Optional[int] = Query(None),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     filter_col = CompStudentNote.comp_chapter_id if comp_chapter_id else CompStudentNote.sub_chapter_id
@@ -389,7 +364,7 @@ async def reorder_comp_student_notes(
 
 
 @router.delete("/notes/{note_id}")
-async def delete_comp_student_note(note_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_comp_student_note(note_id: int, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     note = await session.get(CompStudentNote, note_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -422,6 +397,7 @@ async def update_comp_student_note(
     description: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     is_published: Optional[bool] = Form(None),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -486,6 +462,7 @@ async def update_comp_student_note(
 async def regenerate_comp_note_markdown(
     note_id: int,
     background_tasks: BackgroundTasks,
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     """Admin: re-trigger markdown conversion for an existing note using its stored file."""
@@ -524,6 +501,7 @@ async def regenerate_comp_note_markdown(
 async def generate_comp_note_audio(
     note_id: int,
     background_tasks: BackgroundTasks,
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     """Admin: enqueue ElevenLabs audio generation with word-level sync for a published note."""
@@ -564,6 +542,7 @@ async def upload_comp_student_video(
     sub_chapter_id: Optional[int] = Form(None),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -602,6 +581,7 @@ async def upload_comp_student_video(
 async def get_comp_student_videos(
     comp_chapter_id: Optional[int] = None,
     sub_chapter_id: Optional[int] = None,
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     query = select(CompStudentVideo)
@@ -615,7 +595,7 @@ async def get_comp_student_videos(
 
 
 @router.delete("/video/{video_id}")
-async def delete_comp_student_video(video_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_comp_student_video(video_id: int, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     video = await session.get(CompStudentVideo, video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -632,6 +612,7 @@ async def update_comp_student_video(
     file: UploadFile | None = File(None),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     video = await session.get(CompStudentVideo, video_id)
@@ -668,6 +649,7 @@ async def upload_comp_pyp(
     num_pages: Optional[int] = Form(None),
     is_premium: bool = Form(False),
     enabled: bool = Form(True),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -702,7 +684,7 @@ async def upload_comp_pyp(
 
 
 @router.get("/previous-year-paper")
-async def get_comp_pyps(level_id: Optional[int] = None, session: AsyncSession = Depends(get_session)):
+async def get_comp_pyps(level_id: Optional[int] = None, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     query = select(CompPreviousYearPaper)
     if level_id is not None:
         query = query.where(CompPreviousYearPaper.level_id == level_id)
@@ -715,6 +697,7 @@ async def get_comp_pyps(level_id: Optional[int] = None, session: AsyncSession = 
 async def reorder_comp_pyps(
     payload: OrderUpdate,
     level_id: int = Query(...),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     _result = await session.exec(
@@ -732,7 +715,7 @@ async def reorder_comp_pyps(
 
 
 @router.delete("/previous-year-paper/{paper_id}")
-async def delete_comp_pyp(paper_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_comp_pyp(paper_id: int, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
     obj = await session.get(CompPreviousYearPaper, paper_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Paper not found")
@@ -753,6 +736,7 @@ async def update_comp_pyp(
     num_pages: Optional[int] = Form(None),
     is_premium: Optional[bool] = Form(None),
     enabled: Optional[bool] = Form(None),
+    _admin=Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ):
     obj = await session.get(CompPreviousYearPaper, paper_id)
