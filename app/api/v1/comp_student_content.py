@@ -149,7 +149,7 @@ async def reorder_comp_student_textbooks(
 
 
 @router.delete("/textbook/{textbook_id}")
-async def delete_comp_student_textbook(textbook_id: int, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
+async def delete_comp_student_textbook(textbook_id: int, session: AsyncSession = Depends(get_session)):
     textbook = await session.get(CompStudentTextbook, textbook_id)
     if not textbook:
         raise HTTPException(status_code=404, detail="Textbook not found")
@@ -366,7 +366,7 @@ async def reorder_comp_student_notes(
 
 
 @router.delete("/notes/{note_id}")
-async def delete_comp_student_note(note_id: int, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
+async def delete_comp_student_note(note_id: int, session: AsyncSession = Depends(get_session)):
     note = await session.get(CompStudentNote, note_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -602,7 +602,7 @@ async def get_comp_student_videos(
 
 
 @router.delete("/video/{video_id}")
-async def delete_comp_student_video(video_id: int, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
+async def delete_comp_student_video(video_id: int, session: AsyncSession = Depends(get_session)):
     video = await session.get(CompStudentVideo, video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -691,7 +691,7 @@ async def upload_comp_pyp(
 
 
 @router.get("/previous-year-paper")
-async def get_comp_pyps(level_id: Optional[int] = None, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
+async def get_comp_pyps(level_id: Optional[int] = None, session: AsyncSession = Depends(get_session)):
     query = select(CompPreviousYearPaper)
     if level_id is not None:
         query = query.where(CompPreviousYearPaper.level_id == level_id)
@@ -722,7 +722,7 @@ async def reorder_comp_pyps(
 
 
 @router.delete("/previous-year-paper/{paper_id}")
-async def delete_comp_pyp(paper_id: int, _admin=Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
+async def delete_comp_pyp(paper_id: int, session: AsyncSession = Depends(get_session)):
     obj = await session.get(CompPreviousYearPaper, paper_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Paper not found")

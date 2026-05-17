@@ -7,7 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.comp_activities import (
     CompActivityAnswer, CompActivityPlaySession, CompActivityGroup, CompChapterActivity,
 )
-from app.models.competitive_hierarchy import CompChapter, CompSubject, Level, SubChapter
+from app.models.competitive_hierarchy import CompChapter, CompSubject, SubChapter
 from app.models.comp_student_content import CompStudentNote, CompStudentVideo
 from app.models.comp_study_time import StudyTimeLog
 
