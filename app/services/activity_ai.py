@@ -1024,3 +1024,93 @@ def convert_excel_to_notes_markdown(content_bytes: bytes) -> str:
         raise ValueError("No content found in Excel file. Ensure data starts from row 2 with type in column A and content in column B.")
 
     return "\n".join(lines)
+
+
+def convert_pdf_to_notes_markdown(content_bytes: bytes) -> str:
+    import pdfplumber
+    from io import BytesIO
+
+    pages_text = []
+    with pdfplumber.open(BytesIO(content_bytes)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                pages_text.append(text)
+
+    text = "\n\n".join(pages_text)
+    if not text.strip():
+        raise ValueError("No text content found in PDF file")
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash",
+        temperature=0.1,
+        max_output_tokens=8192,
+    )
+
+    _INSTRUCTIONS = """\
+You are converting educational content for a competitive exam preparation app into Extended Markdown format.
+
+BLOCK TYPES — use these where appropriate:
+- :::formula ... ::: → formulas, equations, key mathematical/scientific rules
+- :::shortcut ... ::: → shortcuts, tricks, mnemonics, quick tips
+- :::pyq_alert ... ::: → previous year question info, exam frequency notes
+- :::mistake ... ::: → common mistakes, errors to avoid
+- :::exam_insight ... ::: → exam pattern info, how the topic is tested
+- :::solved_example ... ::: → worked examples, solved problems
+
+RULES:
+1. Use # for main section headings, ## for sub-sections, ### for sub-sub-sections
+2. Use standard Markdown tables (| col | col |) for data tables
+3. Use **bold** for key terms, *italic* for emphasis
+4. Preserve bullet lists (- item) and numbered lists (1. item)
+5. Each block opens with :::type on its own line and closes with ::: on its own line
+6. Do NOT wrap normal paragraphs in blocks
+7. Keep the content faithful to the original — do not add or remove information"""
+
+    CHUNK_CHARS = 6000
+    paragraphs = text.split("\n\n")
+    raw_chunks: list[str] = []
+    current_parts: list[str] = []
+    current_len = 0
+    for para in paragraphs:
+        para_len = len(para) + 2
+        if current_len + para_len > CHUNK_CHARS and current_parts:
+            raw_chunks.append("\n\n".join(current_parts))
+            current_parts, current_len = [para], para_len
+        else:
+            current_parts.append(para)
+            current_len += para_len
+    if current_parts:
+        raw_chunks.append("\n\n".join(current_parts))
+
+    total = len(raw_chunks)
+    logger.info(f"[convert_pdf] chunks={total} total_chars={len(text)}")
+
+    parts: list[str] = []
+    for i, chunk in enumerate(raw_chunks, start=1):
+        if i == 1 and total == 1:
+            continuation_note = ""
+        elif i == 1:
+            continuation_note = f"\nNOTE: This is part 1 of {total}. Output only the markdown for this part.\n"
+        else:
+            continuation_note = (
+                f"\nNOTE: This is part {i} of {total} of the same document. "
+                "Continue the markdown seamlessly — do NOT re-output the document title or any content already converted. "
+                "Start directly with the next heading or content.\n"
+            )
+
+        prompt = f"""{_INSTRUCTIONS}{continuation_note}
+DOCUMENT TEXT (part {i} of {total}):
+{chunk}
+
+Return ONLY the Extended Markdown for this part. No preamble, no commentary, no code fences."""
+
+        response = _invoke_llm_with_retry(llm, [HumanMessage(content=prompt)], f"convert_pdf_chunk_{i}_of_{total}")
+        cleaned = response.content.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1]
+        if cleaned.endswith("```"):
+            cleaned = cleaned.rsplit("```", 1)[0]
+        parts.append(cleaned.strip())
+
+    return "\n\n".join(parts)

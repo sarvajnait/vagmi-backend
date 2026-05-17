@@ -1,13 +1,13 @@
 from datetime import date, timedelta
 from typing import Optional
-from sqlalchemy import func, case
+from sqlalchemy import func, case, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.comp_activities import (
     CompActivityAnswer, CompActivityPlaySession, CompActivityGroup, CompChapterActivity,
 )
-from app.models.competitive_hierarchy import CompChapter, CompSubject, Level
+from app.models.competitive_hierarchy import CompChapter, CompSubject, Level, SubChapter
 from app.models.comp_student_content import CompStudentNote, CompStudentVideo
 from app.models.comp_study_time import StudyTimeLog
 
@@ -222,17 +222,26 @@ async def get_chapter_detail(user_id: int, chapter_id: int, db: AsyncSession) ->
             "status": status,
         })
 
-    # Notes and videos for this chapter
+    # Sub-chapter IDs belonging to this chapter
+    sub_ids_result = await db.exec(
+        select(SubChapter.id).where(SubChapter.chapter_id == chapter_id)
+    )
+    sub_chapter_ids = list(sub_ids_result.all())
+
+    # Notes and videos — include both chapter-level and sub-chapter-level
+    notes_filter = CompStudentNote.comp_chapter_id == chapter_id
+    if sub_chapter_ids:
+        notes_filter = or_(notes_filter, CompStudentNote.sub_chapter_id.in_(sub_chapter_ids))
     notes_result = await db.exec(
-        select(CompStudentNote).where(
-            CompStudentNote.comp_chapter_id == chapter_id,
-            CompStudentNote.is_published == True,
-        )
+        select(CompStudentNote).where(notes_filter, CompStudentNote.is_published == True)
     )
     notes = [{"id": n.id, "title": n.title, "description": n.description, "language": n.language, "file_url": n.file_url, "word_count": n.word_count, "read_time_min": n.read_time_min, "version": n.version} for n in notes_result.all()]
 
+    videos_filter = CompStudentVideo.comp_chapter_id == chapter_id
+    if sub_chapter_ids:
+        videos_filter = or_(videos_filter, CompStudentVideo.sub_chapter_id.in_(sub_chapter_ids))
     videos_result = await db.exec(
-        select(CompStudentVideo).where(CompStudentVideo.comp_chapter_id == chapter_id)
+        select(CompStudentVideo).where(videos_filter)
     )
     videos = [{"id": v.id, "title": v.title, "file_url": v.file_url} for v in videos_result.all()]
 

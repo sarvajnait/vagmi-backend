@@ -490,7 +490,7 @@ Response:
       }
     ],
     "notes": [ { "id": 1, "title": "Notes PDF", "description": null, "language": "hi", "file_url": "...", "word_count": 3200, "read_time_min": 13, "version": 1 } ],
-    "videos": [ { "id": 2, "title": "Concept Video", "video_url": "..." } ]
+    "videos": [ { "id": 2, "title": "Concept Video", "file_url": "..." } ]
   }
 }
 ```
@@ -956,7 +956,7 @@ Response:
 
 ## 11. Notes Reader
 
-Notes are Markdown documents (converted from .docx/.xlsx by the backend). Each note may optionally have an audio file for a read-along experience.
+Notes are Markdown documents (converted from .docx, .xlsx, or .pdf by the backend). Each note may optionally have an audio file for a read-along experience.
 
 ### Step 1 — Note list (already in chapter detail)
 
@@ -1003,6 +1003,7 @@ Response:
     "file_url": "https://cdn.example.com/comp/chapters/5/student-content/notes/file.docx",
     "audio_url": "https://cdn.example.com/comp/notes/audio/1/audio.mp3",
     "audio_status": "completed",
+    "audio_sync_json": null,
     "is_published": true,
     "updated_at": "2025-05-10T08:30:00Z"
   }
@@ -1016,6 +1017,7 @@ Key fields:
 | `content` | Full Markdown string — render with a Markdown widget |
 | `audio_url` | MP3 for read-along — `null` if audio not generated yet |
 | `audio_status` | `"completed"` \| `"processing"` \| `"failed"` \| `null` |
+| `audio_sync_json` | Reserved for future word-level sync — always `null` currently |
 | `language` | `en`, `hi`, `kn`, `ta`, `te` — use to set text direction / font |
 | `version` | Increments each time the note is regenerated |
 
@@ -1048,7 +1050,7 @@ Markdown(
 
 If `audio_url` is present and `audio_status == "completed"`, you can play the audio alongside the text. The audio is a plain MP3 — use `just_audio` or `audioplayers` to play it.
 
-There is no word-timing data returned from the API — the audio narrates the full note content linearly. Play/pause controls are sufficient.
+The audio is a plain MP3 — play/pause controls are sufficient. `audio_sync_json` is reserved for future word-level highlighting and is `null` for now.
 
 ---
 

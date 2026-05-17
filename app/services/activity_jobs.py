@@ -12,7 +12,7 @@ from app.models.comp_student_content import CompStudentTextbook, CompStudentNote
 from app.services.activity_ai import (
     generate_activities, generate_topics, normalize_activity,
     generate_chapter_summary, generate_one_mark_questions, generate_important_questions,
-    convert_docx_to_notes_markdown, convert_excel_to_notes_markdown,
+    convert_docx_to_notes_markdown, convert_excel_to_notes_markdown, convert_pdf_to_notes_markdown,
     BOARD_TEXTBOOK_COLLECTION, BOARD_QA_COLLECTION,
     COMP_TEXTBOOK_COLLECTION, COMP_QA_COLLECTION,
 )
@@ -589,6 +589,10 @@ async def _run_comp_notes_convert_job(job: ActivityGenerationJob, session):
     elif source == "excel_upload":
         markdown = await asyncio.get_event_loop().run_in_executor(
             None, convert_excel_to_notes_markdown, content_bytes
+        )
+    elif source == "pdf_upload":
+        markdown = await asyncio.get_event_loop().run_in_executor(
+            None, convert_pdf_to_notes_markdown, content_bytes
         )
     else:
         raise ValueError(f"Unknown source: {source}")

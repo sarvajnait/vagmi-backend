@@ -239,6 +239,8 @@ def _note_source(filename: str) -> str:
     name = (filename or "").lower()
     if name.endswith(".xlsx") or name.endswith(".xls"):
         return "excel_upload"
+    if name.endswith(".pdf"):
+        return "pdf_upload"
     return "docx_upload"
 
 
@@ -475,7 +477,8 @@ async def regenerate_comp_note_markdown(
         raise HTTPException(status_code=409, detail="Conversion already in progress")
 
     # Backfill source for notes uploaded before the field existed
-    source = note.source or _note_source(note.original_filename or note.file_url or "")
+    filename = note.original_filename or note.file_url or ""
+    source = note.source or _note_source(filename)
     note.source = source
 
     note.content_status = "processing"
