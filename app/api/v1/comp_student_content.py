@@ -512,6 +512,7 @@ async def generate_comp_note_audio(
     session: AsyncSession = Depends(get_session),
 ):
     """Admin: enqueue ElevenLabs audio generation with word-level sync for a published note."""
+    raise HTTPException(status_code=503, detail="Audio generation is temporarily disabled")
     note = await session.get(CompStudentNote, note_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
