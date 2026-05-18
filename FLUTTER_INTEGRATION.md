@@ -446,27 +446,40 @@ Response:
 {
   "data": {
     "subject": { "id": 1, "name": "Quantitative Aptitude" },
+    "stats": {
+      "chapters_completed": 2,
+      "total_chapters": 5,
+      "total_questions": 120,
+      "study_time_seconds": 3600
+    },
+    "last_active_chapter": {
+      "chapter_id": 10,
+      "chapter_name": "Percentage",
+      "progress_pct": 50
+    },
     "chapters": [
       {
         "id": 10,
-        "name": "Percentage",
+        "title": "Percentage",
+        "chapter_number": 1,
         "sort_order": 1,
-        "total_questions": 40,
-        "answered": 20,
+        "icon_url": null,
+        "is_premium": false,
+        "question_count": 40,
         "progress_pct": 50,
         "status": "in_progress",
-        "last_active_at": "2026-05-03T14:00:00Z"
+        "activity_group_count": 4
       }
-    ],
-    "last_active_chapter_id": 10,
-    "total_questions": 120,
-    "total_answered": 60,
-    "overall_accuracy_pct": 72
+    ]
   }
 }
 ```
 
 `status` values: `"not_started"` | `"in_progress"` | `"completed"`
+
+`is_premium: true` → gate behind subscription check before allowing access.
+
+`last_active_chapter` is `null` if the user hasn't attempted any chapter in this subject.
 
 ### Chapter detail (activity groups + notes/videos)
 `GET /comp/student/chapters/{chapter_id}`
@@ -475,25 +488,47 @@ Response:
 ```json
 {
   "data": {
-    "chapter": { "id": 10, "name": "Percentage" },
+    "chapter": {
+      "id": 10,
+      "title": "Percentage",
+      "chapter_number": 1,
+      "icon_url": null,
+      "is_premium": false
+    },
+    "overall_progress_pct": 50,
     "activity_groups": [
       {
         "id": 5,
         "name": "Basic Percentage",
-        "sort_order": 1,
         "timer_seconds": 600,
-        "total_questions": 10,
-        "answered": 10,
-        "correct": 8,
-        "accuracy_pct": 80,
+        "question_count": 10,
+        "user_questions_done": 10,
+        "user_accuracy_pct": 80,
         "status": "completed"
       }
     ],
-    "notes": [ { "id": 1, "title": "Notes PDF", "description": null, "language": "hi", "file_url": "...", "word_count": 3200, "read_time_min": 13, "version": 1 } ],
-    "videos": [ { "id": 2, "title": "Concept Video", "file_url": "..." } ]
+    "notes": [
+      {
+        "id": 1,
+        "title": "Notes PDF",
+        "description": null,
+        "language": "hi",
+        "file_url": "...",
+        "word_count": 3200,
+        "read_time_min": 13,
+        "version": 1,
+        "audio_url": null,
+        "audio_status": null
+      }
+    ],
+    "videos": [ { "id": 2, "title": "Concept Video", "description": null, "file_url": "..." } ]
   }
 }
 ```
+
+`timer_seconds` — countdown timer in seconds for the quiz session; `null` means no enforced time limit.
+
+`audio_url` / `audio_status` — `null` while audio generation is disabled; once enabled, `audio_status: "completed"` means the MP3 is ready to play.
 
 ---
 

@@ -115,7 +115,10 @@ async def get_subject_chapters(user_id: int, subject_id: int, db: AsyncSession) 
         chapter_list.append({
             "id": cid,
             "title": chapter.name,
+            "chapter_number": chapter.chapter_number,
             "sort_order": chapter.sort_order,
+            "icon_url": chapter.icon_url,
+            "is_premium": chapter.is_premium,
             "question_count": q_total,
             "progress_pct": progress_pct,
             "status": status,
@@ -216,6 +219,7 @@ async def get_chapter_detail(user_id: int, chapter_id: int, db: AsyncSession) ->
         activity_groups.append({
             "id": gid,
             "name": group.name,
+            "timer_seconds": group.timer_seconds,
             "question_count": q_total,
             "user_questions_done": answered,
             "user_accuracy_pct": accuracy_pct,
@@ -235,7 +239,7 @@ async def get_chapter_detail(user_id: int, chapter_id: int, db: AsyncSession) ->
     notes_result = await db.exec(
         select(CompStudentNote).where(notes_filter, CompStudentNote.is_published == True)
     )
-    notes = [{"id": n.id, "title": n.title, "description": n.description, "language": n.language, "file_url": n.file_url, "word_count": n.word_count, "read_time_min": n.read_time_min, "version": n.version} for n in notes_result.all()]
+    notes = [{"id": n.id, "title": n.title, "description": n.description, "language": n.language, "file_url": n.file_url, "word_count": n.word_count, "read_time_min": n.read_time_min, "version": n.version, "audio_url": n.audio_url, "audio_status": n.audio_status} for n in notes_result.all()]
 
     videos_filter = CompStudentVideo.comp_chapter_id == chapter_id
     if sub_chapter_ids:
@@ -243,10 +247,10 @@ async def get_chapter_detail(user_id: int, chapter_id: int, db: AsyncSession) ->
     videos_result = await db.exec(
         select(CompStudentVideo).where(videos_filter)
     )
-    videos = [{"id": v.id, "title": v.title, "file_url": v.file_url} for v in videos_result.all()]
+    videos = [{"id": v.id, "title": v.title, "description": v.description, "file_url": v.file_url} for v in videos_result.all()]
 
     return {
-        "chapter": {"id": chapter_id, "title": chapter.name},
+        "chapter": {"id": chapter_id, "title": chapter.name, "chapter_number": chapter.chapter_number, "icon_url": chapter.icon_url, "is_premium": chapter.is_premium},
         "overall_progress_pct": overall_progress_pct,
         "activity_groups": activity_groups,
         "notes": notes,
