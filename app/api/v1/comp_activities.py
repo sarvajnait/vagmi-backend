@@ -189,21 +189,36 @@ def _parse_option_line(option_line: str, expected_letters: tuple[str, str]) -> d
     }
 
 
+def _is_answer_key_section(line: str) -> bool:
+    """True only when a line is an Answer Key SECTION HEADER, not a sentence that mentions it."""
+    low = line.strip().lower()
+    if "answer key" not in low:
+        return False
+    # Real headers start with "part", "answer key", "section", or "answers"
+    # Sentences like "…before checking the Answer Key." do NOT start with these
+    return low.startswith(("part ", "answer key", "section ", "answers"))
+
+
 def _parse_docx_rows(content: bytes) -> list[dict]:
     paragraphs = _extract_docx_paragraphs(content)
-    # Flexible topic regex: matches "TOPIC 1: ..." or "Topic 1: ..."
-    topic_re = re.compile(r"^(?:TOPIC|Topic)\s+\d+\s*:\s*(.+)$", re.IGNORECASE)
+    # Matches "TOPIC 1: ...", "Topic 1: ...", or "SECTION 5 – TOPIC 1: ..."
+    topic_re = re.compile(
+        r"^(?:(?:SECTION|Section)\s+\d+\s*[–\-—]\s*)?(?:TOPIC|Topic)\s+\d+\s*:\s*(.+)$",
+        re.IGNORECASE,
+    )
     number_re = re.compile(r"^\d+$")
     answer_re = re.compile(r"^\(([a-d])\)$", re.IGNORECASE)
     # Inline question format: "1. Question text" (number and text on same line)
     inline_q_re = re.compile(r"^(\d+)\.\s+(.+)$")
     # Inline answer format: "Q1  Answer: (c)", "Q1. Answer: (c)", or "1. Answer: (c)"
     inline_ans_re = re.compile(r"^Q?\.?(\d+)\.?\s+Answer:\s*\(([a-d])\)", re.IGNORECASE)
+    # Q-prefixed number: "Q1", "Q2" etc. (used in some templates for both questions and answer keys)
+    q_label_re = re.compile(r"^Q(\d+)$", re.IGNORECASE)
 
     # Headers to skip within sections
     noise_headers = {
         "Q.No", "Question & Options", "Answer", "Explanation", "Q.",
-        "(10 CTET-Style MCQs — Attempt all, then check answers below)"
+        "(10 CTET-Style MCQs — Attempt all, then check answers below)",
     }
 
     terminal_markers = {
@@ -224,8 +239,8 @@ def _parse_docx_rows(content: bytes) -> list[dict]:
         topic_name = topic_match.group(1).strip()
         i += 1
 
-        # Find the start of questions section
-        while i < len(paragraphs) and "Questions" not in paragraphs[i]:
+        # Find the start of questions section (case-insensitive)
+        while i < len(paragraphs) and "question" not in paragraphs[i].lower():
             if topic_re.match(paragraphs[i]):
                 break
             i += 1
@@ -238,11 +253,11 @@ def _parse_docx_rows(content: bytes) -> list[dict]:
         question_map: dict[int, dict] = {}
 
         # Parse Questions
-        while i < len(paragraphs) and "Answer Key" not in paragraphs[i]:
+        while i < len(paragraphs) and not _is_answer_key_section(paragraphs[i]):
             p = paragraphs[i].strip()
             if topic_re.match(p):
                 break
-            if p in noise_headers:
+            if p in noise_headers or p.startswith("Instructions:"):
                 i += 1
                 continue
 
@@ -265,6 +280,18 @@ def _parse_docx_rows(content: bytes) -> list[dict]:
                 question_text = m.group(2).strip()
                 i += 1
 
+            # Format 3: "Q1" label on its own line, question text on next line
+            elif q_label_re.match(p):
+                m = q_label_re.match(p)
+                qno = int(m.group(1))
+                i += 1
+                while i < len(paragraphs) and paragraphs[i].strip() in noise_headers:
+                    i += 1
+                if i >= len(paragraphs):
+                    break
+                question_text = paragraphs[i].strip()
+                i += 1
+
             else:
                 i += 1
                 continue
@@ -274,7 +301,7 @@ def _parse_docx_rows(content: bytes) -> list[dict]:
             # They could be 2 per line or 1 per line
             while i < len(paragraphs) and len(options) < 4:
                 line = paragraphs[i].strip()
-                if number_re.match(line) or inline_q_re.match(line) or topic_re.match(line) or "Answer Key" in line:
+                if number_re.match(line) or inline_q_re.match(line) or q_label_re.match(line) or topic_re.match(line) or _is_answer_key_section(line):
                     break
 
                 # Parse all (x) patterns in the line
@@ -300,10 +327,10 @@ def _parse_docx_rows(content: bytes) -> list[dict]:
             # If we didn't find 4 options, this question is invalid or we hit the next block
 
         # Parse Answer Key
-        while i < len(paragraphs) and "Answer Key" not in paragraphs[i]:
+        while i < len(paragraphs) and not _is_answer_key_section(paragraphs[i]):
             i += 1
 
-        if i < len(paragraphs) and "Answer Key" in paragraphs[i]:
+        if i < len(paragraphs) and _is_answer_key_section(paragraphs[i]):
             i += 1 # skip header
 
             while i < len(paragraphs):
@@ -311,9 +338,10 @@ def _parse_docx_rows(content: bytes) -> list[dict]:
                 if p in terminal_markers or topic_re.match(p):
                     break
 
-                # Format 1: standalone number line
-                if not p in noise_headers and number_re.match(p):
-                    qno = int(p)
+                # Format 1: standalone number line, or "Q1" label
+                _q_num_m = q_label_re.match(p)
+                if p not in noise_headers and (number_re.match(p) or _q_num_m):
+                    qno = int(_q_num_m.group(1)) if _q_num_m else int(p)
                     i += 1
                     # Next line should be the answer (a)
                     while i < len(paragraphs) and paragraphs[i].strip() in noise_headers:
@@ -368,6 +396,80 @@ def _parse_docx_rows(content: bytes) -> list[dict]:
 
     if not rows:
         raise ValueError("No MCQ content could be parsed from the DOCX file")
+    return rows
+
+
+class _AIMcq(BaseModel):
+    topic_name: str
+    question_text: str
+    option_a: str
+    option_b: str
+    option_c: str
+    option_d: str
+    correct_option_index: int  # 1=A, 2=B, 3=C, 4=D
+    answer_description: str
+
+
+class _AIMcqList(BaseModel):
+    questions: list[_AIMcq]
+
+
+def _parse_docx_rows_ai(content: bytes) -> list[dict]:
+    """Gemini fallback: extract MCQs from DOCX when the heuristic parser finds nothing."""
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    paragraphs = _extract_docx_paragraphs(content)
+    raw_text = "\n".join(paragraphs)
+
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, streaming=False)
+    structured = llm.with_structured_output(_AIMcqList)
+
+    system_msg = (
+        "You are a structured data extractor. Your only job is to find MCQs in the text and return them.\n\n"
+        "STRICT RULES:\n"
+        "1. Only extract questions that appear VERBATIM in the provided text.\n"
+        "2. Do NOT invent, paraphrase, or generate anything not present in the text.\n"
+        "3. If you cannot find complete MCQs (question + 4 options + a stated correct answer), "
+        "return an empty questions list. An empty list is the correct answer when content is absent.\n"
+        "4. Omit any question whose correct answer is not explicitly stated in the text."
+    )
+
+    user_msg = (
+        "Extract every complete MCQ from the text below.\n\n"
+        "Rules for each MCQ:\n"
+        "- topic_name: the section/topic it belongs to (empty string if not identifiable)\n"
+        "- question_text: the question stem exactly as written\n"
+        "- option_a through option_d: the four option texts\n"
+        "- correct_option_index: 1=A, 2=B, 3=C, 4=D — only from what the text states\n"
+        "- answer_description: explanation if given, otherwise empty string\n\n"
+        "Return an empty questions list if no complete MCQs are found. Never fabricate.\n\n"
+        f"TEXT:\n{raw_text[:80000]}"
+    )
+
+    try:
+        result: _AIMcqList = structured.invoke([
+            SystemMessage(content=system_msg),
+            HumanMessage(content=user_msg),
+        ])
+    except Exception:
+        return []
+
+    rows = []
+    for mcq in result.questions:
+        if mcq.correct_option_index not in {1, 2, 3, 4}:
+            continue
+        rows.append({
+            "topic_name": mcq.topic_name,
+            "question_text": mcq.question_text,
+            "option_a": mcq.option_a,
+            "option_b": mcq.option_b,
+            "option_c": mcq.option_c,
+            "option_d": mcq.option_d,
+            "correct_option_index": mcq.correct_option_index,
+            "answer_description": mcq.answer_description,
+            "source_row": f"AI:{mcq.topic_name}",
+        })
     return rows
 
 
@@ -765,7 +867,18 @@ async def import_comp_activities(
         if filename.endswith(".xlsx"):
             parsed_rows = _parse_xlsx_rows(content)
         else:
-            parsed_rows = _parse_docx_rows(content)
+            try:
+                parsed_rows = _parse_docx_rows(content)
+            except ValueError:
+                # Heuristic found nothing — fall back to Gemini extraction
+                parsed_rows = _parse_docx_rows_ai(content)
+                if not parsed_rows:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Could not extract MCQs from this file. The format may not be supported.",
+                    )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read import file: {e}")
 
