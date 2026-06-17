@@ -20,6 +20,7 @@ from app.models import (
     UserSubscriptionRead,
     UserSubscriptionUpdate,
 )
+from app.models.competitive_hierarchy import CompExamMedium, Exam, Level
 from app.services.database import get_session
 
 router = APIRouter()
@@ -34,51 +35,111 @@ class BulkSubscriptionCreate(BaseModel):
     notes: Optional[str] = None
 
 
+async def _enrich_plan(plan: SubscriptionPlan, session: AsyncSession) -> SubscriptionPlanRead:
+    """Build a SubscriptionPlanRead with denormalized names for both plan types."""
+    if plan.plan_type == "comp":
+        level = await session.get(Level, plan.level_id) if plan.level_id else None
+        comp_medium = await session.get(CompExamMedium, level.medium_id) if level else None
+        exam = await session.get(Exam, comp_medium.exam_id) if comp_medium else None
+        return SubscriptionPlanRead(
+            **plan.model_dump(),
+            level_name=level.name if level else None,
+            comp_medium_name=comp_medium.name if comp_medium else None,
+            exam_name=exam.name if exam else None,
+        )
+    else:
+        class_level = await session.get(ClassLevel, plan.class_level_id) if plan.class_level_id else None
+        board = await session.get(Board, plan.board_id) if plan.board_id else None
+        medium = await session.get(Medium, plan.medium_id) if plan.medium_id else None
+        return SubscriptionPlanRead(
+            **plan.model_dump(),
+            class_level_name=class_level.name if class_level else None,
+            board_name=board.name if board else None,
+            medium_name=medium.name if medium else None,
+        )
+
+
+async def _validate_plan_scope(plan_type: str, data: dict, session: AsyncSession, exclude_plan_id: Optional[int] = None):
+    """Validate scope FKs exist and uniqueness. Raises HTTPException on failure."""
+    if plan_type == "academic":
+        class_level_id = data.get("class_level_id")
+        board_id = data.get("board_id")
+        medium_id = data.get("medium_id")
+
+        if not class_level_id or not board_id or not medium_id:
+            raise HTTPException(status_code=400, detail="Academic plans require class, board, and medium")
+
+        class_level = await session.get(ClassLevel, class_level_id)
+        board = await session.get(Board, board_id)
+        medium = await session.get(Medium, medium_id)
+        if not class_level or not board or not medium:
+            raise HTTPException(status_code=400, detail="Invalid class/board/medium")
+
+        query = select(SubscriptionPlan).where(
+            SubscriptionPlan.plan_type == "academic",
+            SubscriptionPlan.class_level_id == class_level_id,
+            SubscriptionPlan.board_id == board_id,
+            SubscriptionPlan.medium_id == medium_id,
+        )
+        if exclude_plan_id:
+            query = query.where(SubscriptionPlan.id != exclude_plan_id)
+        existing = (await session.exec(query)).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Plan already exists for this class/board/medium")
+
+    elif plan_type == "comp":
+        level_id = data.get("level_id")
+        if not level_id:
+            raise HTTPException(status_code=400, detail="Comp plans require a level")
+
+        level = await session.get(Level, level_id)
+        if not level:
+            raise HTTPException(status_code=400, detail="Invalid level")
+
+        query = select(SubscriptionPlan).where(
+            SubscriptionPlan.plan_type == "comp",
+            SubscriptionPlan.level_id == level_id,
+        )
+        if exclude_plan_id:
+            query = query.where(SubscriptionPlan.id != exclude_plan_id)
+        existing = (await session.exec(query)).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Plan already exists for this level")
+
+    else:
+        raise HTTPException(status_code=400, detail="plan_type must be 'academic' or 'comp'")
+
+
 # --------------------
 # Subscription Plans
 # --------------------
 @router.get("/plans", response_model=Dict[str, List[SubscriptionPlanRead]])
 async def list_plans(
+    plan_type: Optional[str] = Query(None),
     class_level_id: Optional[int] = Query(None),
     board_id: Optional[int] = Query(None),
     medium_id: Optional[int] = Query(None),
+    level_id: Optional[int] = Query(None),
     session: AsyncSession = Depends(get_session),
 ):
-    query = (
-        select(SubscriptionPlan, ClassLevel, Board, Medium)
-        .select_from(SubscriptionPlan)
-        .join(ClassLevel, SubscriptionPlan.class_level_id == ClassLevel.id)
-        .join(Board, SubscriptionPlan.board_id == Board.id)
-        .join(Medium, SubscriptionPlan.medium_id == Medium.id)
-    )
+    query = select(SubscriptionPlan)
 
+    if plan_type is not None:
+        query = query.where(SubscriptionPlan.plan_type == plan_type)
     if class_level_id is not None:
         query = query.where(SubscriptionPlan.class_level_id == class_level_id)
     if board_id is not None:
         query = query.where(SubscriptionPlan.board_id == board_id)
     if medium_id is not None:
         query = query.where(SubscriptionPlan.medium_id == medium_id)
+    if level_id is not None:
+        query = query.where(SubscriptionPlan.level_id == level_id)
 
-    _result = await session.exec(query.order_by(ClassLevel.name, Board.name, Medium.name))
-    results = _result.all()
+    _result = await session.exec(query.order_by(SubscriptionPlan.plan_type, SubscriptionPlan.name))
+    plans = _result.all()
 
-    plans = [
-        SubscriptionPlanRead(
-            id=plan.id,
-            name=plan.name,
-            class_level_id=plan.class_level_id,
-            board_id=plan.board_id,
-            medium_id=plan.medium_id,
-            amount_inr=plan.amount_inr,
-            is_active=plan.is_active,
-            description=plan.description,
-            class_level_name=class_level.name,
-            board_name=board.name,
-            medium_name=medium.name,
-        )
-        for plan, class_level, board, medium in results
-    ]
-    return {"data": plans}
+    enriched = [await _enrich_plan(p, session) for p in plans]
+    return {"data": enriched}
 
 
 @router.get("/plans/{plan_id}", response_model=Dict[str, SubscriptionPlanRead])
@@ -86,73 +147,30 @@ async def get_plan(plan_id: int, session: AsyncSession = Depends(get_session)):
     plan = await session.get(SubscriptionPlan, plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="Subscription plan not found")
-
-    class_level = await session.get(ClassLevel, plan.class_level_id)
-    board = await session.get(Board, plan.board_id)
-    medium = await session.get(Medium, plan.medium_id)
-
-    return {
-        "data": SubscriptionPlanRead(
-            id=plan.id,
-            name=plan.name,
-            class_level_id=plan.class_level_id,
-            board_id=plan.board_id,
-            medium_id=plan.medium_id,
-            amount_inr=plan.amount_inr,
-            is_active=plan.is_active,
-            description=plan.description,
-            class_level_name=class_level.name if class_level else None,
-            board_name=board.name if board else None,
-            medium_name=medium.name if medium else None,
-        )
-    }
+    return {"data": await _enrich_plan(plan, session)}
 
 
 @router.post("/plans", response_model=Dict[str, SubscriptionPlanRead])
 async def create_plan(
     plan: SubscriptionPlanCreate, session: AsyncSession = Depends(get_session)
 ):
-    class_level = await session.get(ClassLevel, plan.class_level_id)
-    board = await session.get(Board, plan.board_id)
-    medium = await session.get(Medium, plan.medium_id)
+    await _validate_plan_scope(plan.plan_type, plan.model_dump(), session)
 
-    if not class_level or not board or not medium:
-        raise HTTPException(status_code=400, detail="Invalid class/board/medium")
+    # Null out irrelevant scope fields
+    data = plan.model_dump()
+    if plan.plan_type == "comp":
+        data["class_level_id"] = None
+        data["board_id"] = None
+        data["medium_id"] = None
+    else:
+        data["level_id"] = None
 
-    _result = await session.exec(
-        select(SubscriptionPlan).where(
-            SubscriptionPlan.class_level_id == plan.class_level_id,
-            SubscriptionPlan.board_id == plan.board_id,
-            SubscriptionPlan.medium_id == plan.medium_id,
-        )
-    )
-    existing = _result.first()
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="Plan already exists for this class/board/medium",
-        )
-
-    db_plan = SubscriptionPlan.model_validate(plan)
+    db_plan = SubscriptionPlan.model_validate(data)
     session.add(db_plan)
     await session.commit()
     await session.refresh(db_plan)
 
-    return {
-        "data": SubscriptionPlanRead(
-            id=db_plan.id,
-            name=db_plan.name,
-            class_level_id=db_plan.class_level_id,
-            board_id=db_plan.board_id,
-            medium_id=db_plan.medium_id,
-            amount_inr=db_plan.amount_inr,
-            is_active=db_plan.is_active,
-            description=db_plan.description,
-            class_level_name=class_level.name,
-            board_name=board.name,
-            medium_name=medium.name,
-        )
-    }
+    return {"data": await _enrich_plan(db_plan, session)}
 
 
 @router.put("/plans/{plan_id}", response_model=Dict[str, SubscriptionPlanRead])
@@ -166,69 +184,38 @@ async def update_plan(
         raise HTTPException(status_code=404, detail="Subscription plan not found")
 
     update_data = plan_data.model_dump(exclude_unset=True)
+    effective_type = update_data.get("plan_type", db_plan.plan_type)
 
-    if {
-        "class_level_id",
-        "board_id",
-        "medium_id",
-    } & update_data.keys():
-        class_level_id = update_data.get("class_level_id", db_plan.class_level_id)
-        board_id = update_data.get("board_id", db_plan.board_id)
-        medium_id = update_data.get("medium_id", db_plan.medium_id)
+    # Build the full scope picture for validation (merge update over current)
+    scope_data = {
+        "class_level_id": update_data.get("class_level_id", db_plan.class_level_id),
+        "board_id": update_data.get("board_id", db_plan.board_id),
+        "medium_id": update_data.get("medium_id", db_plan.medium_id),
+        "level_id": update_data.get("level_id", db_plan.level_id),
+    }
 
-        class_level = await session.get(ClassLevel, class_level_id)
-        board = await session.get(Board, board_id)
-        medium = await session.get(Medium, medium_id)
-        if not class_level or not board or not medium:
-            raise HTTPException(status_code=400, detail="Invalid class/board/medium")
-
-        _result = await session.exec(
-            select(SubscriptionPlan).where(
-                SubscriptionPlan.class_level_id == class_level_id,
-                SubscriptionPlan.board_id == board_id,
-                SubscriptionPlan.medium_id == medium_id,
-                SubscriptionPlan.id != plan_id,
-            ))
-
-        existing = _result.first()
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail="Another plan already exists for this class/board/medium",
-            )
-
-        db_plan.class_level_id = class_level_id
-        db_plan.board_id = board_id
-        db_plan.medium_id = medium_id
+    scope_fields = {"class_level_id", "board_id", "medium_id", "level_id", "plan_type"}
+    if scope_fields & update_data.keys():
+        await _validate_plan_scope(effective_type, scope_data, session, exclude_plan_id=plan_id)
 
     for field, value in update_data.items():
-        if field in {"class_level_id", "board_id", "medium_id"}:
-            continue
         setattr(db_plan, field, value)
+
+    # Always null out the opposite-type scope fields based on effective type.
+    # This prevents cross-type leakage when e.g. level_id is sent to an academic
+    # plan without also changing plan_type.
+    if effective_type == "comp":
+        db_plan.class_level_id = None
+        db_plan.board_id = None
+        db_plan.medium_id = None
+    else:
+        db_plan.level_id = None
 
     session.add(db_plan)
     await session.commit()
     await session.refresh(db_plan)
 
-    class_level = await session.get(ClassLevel, db_plan.class_level_id)
-    board = await session.get(Board, db_plan.board_id)
-    medium = await session.get(Medium, db_plan.medium_id)
-
-    return {
-        "data": SubscriptionPlanRead(
-            id=db_plan.id,
-            name=db_plan.name,
-            class_level_id=db_plan.class_level_id,
-            board_id=db_plan.board_id,
-            medium_id=db_plan.medium_id,
-            amount_inr=db_plan.amount_inr,
-            is_active=db_plan.is_active,
-            description=db_plan.description,
-            class_level_name=class_level.name if class_level else None,
-            board_name=board.name if board else None,
-            medium_name=medium.name if medium else None,
-        )
-    }
+    return {"data": await _enrich_plan(db_plan, session)}
 
 
 @router.delete("/plans/{plan_id}")
@@ -265,7 +252,9 @@ async def list_subscriptions(
     if active_only:
         today = date.today()
         query = query.where(
-            UserSubscription.starts_at <= today, UserSubscription.ends_at >= today
+            UserSubscription.status == "active",
+            UserSubscription.starts_at <= today,
+            UserSubscription.ends_at >= today,
         )
 
     _result = await session.exec(query.order_by(UserSubscription.starts_at.desc()))

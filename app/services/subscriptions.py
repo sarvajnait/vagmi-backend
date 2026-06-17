@@ -30,11 +30,15 @@ async def get_active_subscription_summary(
         "id": sub.id,
         "plan_id": sub.plan_id,
         "plan_name": plan.name,
+        "plan_type": plan.plan_type,
         "starts_at": sub.starts_at,
         "ends_at": sub.ends_at,
         "status": sub.status,
+        # Academic scope
         "class_level_id": plan.class_level_id,
         "board_id": plan.board_id,
         "medium_id": plan.medium_id,
+        # Comp scope
+        "level_id": plan.level_id,
         "is_active": True,
     }

@@ -1,6 +1,7 @@
 from datetime import date
 from typing import Optional, TYPE_CHECKING
 
+from sqlalchemy import Column, Integer, ForeignKey
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.models.base import BaseModel
@@ -14,9 +15,16 @@ if TYPE_CHECKING:
 # --------------------
 class SubscriptionPlanBase(SQLModel):
     name: str
-    class_level_id: int = Field(foreign_key="class_levels.id")
-    board_id: int = Field(foreign_key="boards.id")
-    medium_id: int = Field(foreign_key="mediums.id")
+    plan_type: str = Field(default="academic")  # "academic" | "comp"
+    # Academic scope (required when plan_type="academic")
+    class_level_id: Optional[int] = Field(default=None, foreign_key="class_levels.id")
+    board_id: Optional[int] = Field(default=None, foreign_key="boards.id")
+    medium_id: Optional[int] = Field(default=None, foreign_key="mediums.id")
+    # Comp scope (required when plan_type="comp")
+    level_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("comp_levels.id", ondelete="SET NULL"), nullable=True),
+    )
     amount_inr: int = Field(default=99)
     duration_days: int = Field(default=30)
     fixed_end_date: Optional[date] = Field(default=None)
@@ -39,9 +47,11 @@ class SubscriptionPlanCreate(SubscriptionPlanBase):
 
 class SubscriptionPlanUpdate(SQLModel):
     name: Optional[str] = None
+    plan_type: Optional[str] = None
     class_level_id: Optional[int] = None
     board_id: Optional[int] = None
     medium_id: Optional[int] = None
+    level_id: Optional[int] = None
     amount_inr: Optional[int] = None
     duration_days: Optional[int] = None
     fixed_end_date: Optional[date] = None
@@ -51,9 +61,14 @@ class SubscriptionPlanUpdate(SQLModel):
 
 class SubscriptionPlanRead(SubscriptionPlanBase):
     id: int
+    # Academic denormalized names
     class_level_name: Optional[str] = None
     board_name: Optional[str] = None
     medium_name: Optional[str] = None
+    # Comp denormalized names
+    level_name: Optional[str] = None
+    comp_medium_name: Optional[str] = None
+    exam_name: Optional[str] = None
 
 
 # --------------------

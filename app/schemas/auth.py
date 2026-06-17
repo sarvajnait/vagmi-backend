@@ -55,12 +55,14 @@ class SubscriptionSummary(BaseModel):
     id: int
     plan_id: int
     plan_name: str | None = None
+    plan_type: str = "academic"
     starts_at: date
     ends_at: date
     status: str
     class_level_id: int | None = None
     board_id: int | None = None
     medium_id: int | None = None
+    level_id: int | None = None
     is_active: bool = True
 
 
