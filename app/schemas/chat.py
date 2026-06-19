@@ -55,3 +55,9 @@ class ChatRequest(BaseModel):
     message: str
     subject_id: int
     chapter_id: Optional[int] = None
+
+
+class CompChatRequest(BaseModel):
+    message: str
+    comp_subject_id: int
+    comp_chapter_id: Optional[int] = None
