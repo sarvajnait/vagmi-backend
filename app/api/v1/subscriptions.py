@@ -60,7 +60,7 @@ async def _enrich_plan(plan: SubscriptionPlan, session: AsyncSession) -> Subscri
 
 
 async def _validate_plan_scope(plan_type: str, data: dict, session: AsyncSession, exclude_plan_id: Optional[int] = None):
-    """Validate scope FKs exist and uniqueness. Raises HTTPException on failure."""
+    """Validate scope FKs exist. Raises HTTPException on failure."""
     if plan_type == "academic":
         class_level_id = data.get("class_level_id")
         board_id = data.get("board_id")
@@ -75,18 +75,6 @@ async def _validate_plan_scope(plan_type: str, data: dict, session: AsyncSession
         if not class_level or not board or not medium:
             raise HTTPException(status_code=400, detail="Invalid class/board/medium")
 
-        query = select(SubscriptionPlan).where(
-            SubscriptionPlan.plan_type == "academic",
-            SubscriptionPlan.class_level_id == class_level_id,
-            SubscriptionPlan.board_id == board_id,
-            SubscriptionPlan.medium_id == medium_id,
-        )
-        if exclude_plan_id:
-            query = query.where(SubscriptionPlan.id != exclude_plan_id)
-        existing = (await session.exec(query)).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="Plan already exists for this class/board/medium")
-
     elif plan_type == "comp":
         level_id = data.get("level_id")
         if not level_id:
@@ -95,16 +83,6 @@ async def _validate_plan_scope(plan_type: str, data: dict, session: AsyncSession
         level = await session.get(Level, level_id)
         if not level:
             raise HTTPException(status_code=400, detail="Invalid level")
-
-        query = select(SubscriptionPlan).where(
-            SubscriptionPlan.plan_type == "comp",
-            SubscriptionPlan.level_id == level_id,
-        )
-        if exclude_plan_id:
-            query = query.where(SubscriptionPlan.id != exclude_plan_id)
-        existing = (await session.exec(query)).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="Plan already exists for this level")
 
     else:
         raise HTTPException(status_code=400, detail="plan_type must be 'academic' or 'comp'")
@@ -223,6 +201,16 @@ async def delete_plan(plan_id: int, session: AsyncSession = Depends(get_session)
     plan = await session.get(SubscriptionPlan, plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="Subscription plan not found")
+
+    linked = (await session.exec(
+        select(UserSubscription).where(UserSubscription.plan_id == plan_id)
+    )).first()
+    if linked:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete plan with existing subscriptions. Remove all subscriptions first.",
+        )
+
     await session.delete(plan)
     await session.commit()
     return {"message": "Subscription plan deleted successfully"}
