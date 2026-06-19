@@ -10,6 +10,7 @@ from app.models.comp_llm_resources import (
 )
 from app.models.comp_artifacts import CompChapterArtifact
 from app.models import ActivityGenerationJob
+from app.models.competitive_hierarchy import CompChapter, SubChapter
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do
 from app.utils.cleanup import delete_embeddings_by_resource_id
@@ -36,10 +37,20 @@ def sort_ordering(model):
 
 
 def _resolve_fk(comp_chapter_id: Optional[int], sub_chapter_id: Optional[int]):
-    """Ensure exactly one FK is set."""
+    """Ensure at least one FK is set."""
     if comp_chapter_id is None and sub_chapter_id is None:
         raise HTTPException(status_code=400, detail="Either comp_chapter_id or sub_chapter_id must be provided")
     return comp_chapter_id, sub_chapter_id
+
+
+async def _validate_chapter_fk(comp_chapter_id: Optional[int], sub_chapter_id: Optional[int], session: AsyncSession):
+    """Validate that the chapter or sub-chapter actually exists in the DB."""
+    if comp_chapter_id is not None:
+        if not await session.get(CompChapter, comp_chapter_id):
+            raise HTTPException(status_code=404, detail="Chapter not found")
+    if sub_chapter_id is not None:
+        if not await session.get(SubChapter, sub_chapter_id):
+            raise HTTPException(status_code=404, detail="Sub-chapter not found")
 
 
 # ============================================================
@@ -58,6 +69,7 @@ async def upload_comp_textbook(
 ):
     try:
         comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
+        await _validate_chapter_fk(comp_chapter_id, sub_chapter_id, session)
         folder_id = comp_chapter_id or sub_chapter_id
         do_path = f"comp/chapters/{folder_id}/llm-resources/textbooks"
         file_url = upload_to_do(file, do_path)
@@ -277,6 +289,7 @@ async def upload_comp_llm_note(
 ):
     try:
         comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
+        await _validate_chapter_fk(comp_chapter_id, sub_chapter_id, session)
         folder_id = comp_chapter_id or sub_chapter_id
         do_path = f"comp/chapters/{folder_id}/llm-resources/notes"
         file_url = upload_to_do(file, do_path)
@@ -397,6 +410,7 @@ async def create_comp_additional_note(
     session: AsyncSession = Depends(get_session),
 ):
     comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
+    await _validate_chapter_fk(comp_chapter_id, sub_chapter_id, session)
     filter_col = CompAdditionalNote.comp_chapter_id if comp_chapter_id else CompAdditionalNote.sub_chapter_id
     filter_val = comp_chapter_id or sub_chapter_id
     _result = await session.exec(select(func.max(CompAdditionalNote.sort_order)).where(filter_col == filter_val))
@@ -494,6 +508,7 @@ async def upload_comp_qa_pattern(
 ):
     try:
         comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
+        await _validate_chapter_fk(comp_chapter_id, sub_chapter_id, session)
         folder_id = comp_chapter_id or sub_chapter_id
         do_path = f"comp/chapters/{folder_id}/llm-resources/qa-patterns"
         file_url = upload_to_do(file, do_path)
@@ -618,6 +633,7 @@ async def upload_comp_image(
 ):
     try:
         comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
+        await _validate_chapter_fk(comp_chapter_id, sub_chapter_id, session)
         folder_id = comp_chapter_id or sub_chapter_id
         do_path = f"comp/chapters/{folder_id}/llm-resources/images"
         compressed = compress_image(file)

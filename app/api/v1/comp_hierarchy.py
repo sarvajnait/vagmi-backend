@@ -87,14 +87,16 @@ async def get_exams(exam_category_id: Optional[int] = None, session: AsyncSessio
     if exam_category_id is not None:
         query = query.where(Exam.exam_category_id == exam_category_id)
     query = query.order_by(*sort_ordering(Exam))
-    result = await session.exec(query)
-    exams = result.all()
+    exams = (await session.exec(query)).all()
+    cat_ids = {e.exam_category_id for e in exams if e.exam_category_id}
+    cats = {}
+    if cat_ids:
+        cats = {c.id: c for c in (await session.exec(select(ExamCategory).where(ExamCategory.id.in_(cat_ids)))).all()}
     data = []
     for e in exams:
         row = e.dict()
-        if e.exam_category_id:
-            cat = await session.get(ExamCategory, e.exam_category_id)
-            row["exam_category_name"] = cat.name if cat else None
+        cat = cats.get(e.exam_category_id)
+        row["exam_category_name"] = cat.name if cat else None
         data.append(row)
     return {"data": data}
 
@@ -155,12 +157,15 @@ async def get_comp_mediums(exam_id: Optional[int] = None, session: AsyncSession 
     if exam_id is not None:
         query = query.where(CompExamMedium.exam_id == exam_id)
     query = query.order_by(*sort_ordering(CompExamMedium))
-    result = await session.exec(query)
-    mediums = result.all()
+    mediums = (await session.exec(query)).all()
+    exam_ids = {m.exam_id for m in mediums if m.exam_id}
+    exams = {}
+    if exam_ids:
+        exams = {e.id: e for e in (await session.exec(select(Exam).where(Exam.id.in_(exam_ids)))).all()}
     data = []
     for m in mediums:
         row = m.dict()
-        exam = await session.get(Exam, m.exam_id)
+        exam = exams.get(m.exam_id)
         row["exam_name"] = exam.name if exam else None
         data.append(row)
     return {"data": data}
@@ -222,12 +227,15 @@ async def get_levels(medium_id: Optional[int] = None, session: AsyncSession = De
     if medium_id is not None:
         query = query.where(Level.medium_id == medium_id)
     query = query.order_by(*sort_ordering(Level))
-    result = await session.exec(query)
-    levels = result.all()
+    levels = (await session.exec(query)).all()
+    medium_ids = {lv.medium_id for lv in levels if lv.medium_id}
+    mediums = {}
+    if medium_ids:
+        mediums = {m.id: m for m in (await session.exec(select(CompExamMedium).where(CompExamMedium.id.in_(medium_ids)))).all()}
     data = []
     for lv in levels:
         row = lv.dict()
-        medium = await session.get(CompExamMedium, lv.medium_id)
+        medium = mediums.get(lv.medium_id)
         row["medium_name"] = medium.name if medium else None
         data.append(row)
     return {"data": data}
@@ -289,12 +297,15 @@ async def get_comp_subjects(level_id: Optional[int] = None, session: AsyncSessio
     if level_id is not None:
         query = query.where(CompSubject.level_id == level_id)
     query = query.order_by(*sort_ordering(CompSubject))
-    result = await session.exec(query)
-    subjects = result.all()
+    subjects = (await session.exec(query)).all()
+    level_ids = {s.level_id for s in subjects if s.level_id}
+    levels = {}
+    if level_ids:
+        levels = {lv.id: lv for lv in (await session.exec(select(Level).where(Level.id.in_(level_ids)))).all()}
     data = []
     for s in subjects:
         row = s.dict()
-        lv = await session.get(Level, s.level_id)
+        lv = levels.get(s.level_id)
         row["level_name"] = lv.name if lv else None
         data.append(row)
     return {"data": data}
@@ -356,12 +367,15 @@ async def get_comp_chapters(subject_id: Optional[int] = None, session: AsyncSess
     if subject_id is not None:
         query = query.where(CompChapter.subject_id == subject_id)
     query = query.order_by(*sort_ordering(CompChapter))
-    result = await session.exec(query)
-    chapters = result.all()
+    chapters = (await session.exec(query)).all()
+    subject_ids = {c.subject_id for c in chapters if c.subject_id}
+    subjects = {}
+    if subject_ids:
+        subjects = {s.id: s for s in (await session.exec(select(CompSubject).where(CompSubject.id.in_(subject_ids)))).all()}
     data = []
     for c in chapters:
         row = c.dict()
-        subj = await session.get(CompSubject, c.subject_id)
+        subj = subjects.get(c.subject_id)
         row["subject_name"] = subj.name if subj else None
         data.append(row)
     return {"data": data}
@@ -406,7 +420,12 @@ async def update_comp_chapter(id: int, payload: CompChapterUpdate, session: Asyn
     obj = await session.get(CompChapter, id)
     if not obj:
         raise HTTPException(status_code=404, detail="Chapter not found")
-    for k, v in payload.dict(exclude_unset=True).items():
+    update_data = payload.dict(exclude_unset=True)
+    if "subject_id" in update_data:
+        subj = await session.get(CompSubject, update_data["subject_id"])
+        if not subj:
+            raise HTTPException(status_code=404, detail="Subject not found")
+    for k, v in update_data.items():
         setattr(obj, k, v)
     session.add(obj)
     await session.commit()
@@ -434,12 +453,15 @@ async def get_sub_chapters(chapter_id: Optional[int] = None, session: AsyncSessi
     if chapter_id is not None:
         query = query.where(SubChapter.chapter_id == chapter_id)
     query = query.order_by(*sort_ordering(SubChapter))
-    result = await session.exec(query)
-    sub_chapters = result.all()
+    sub_chapters = (await session.exec(query)).all()
+    chapter_ids = {sc.chapter_id for sc in sub_chapters if sc.chapter_id}
+    chapters = {}
+    if chapter_ids:
+        chapters = {c.id: c for c in (await session.exec(select(CompChapter).where(CompChapter.id.in_(chapter_ids)))).all()}
     data = []
     for sc in sub_chapters:
         row = sc.dict()
-        ch = await session.get(CompChapter, sc.chapter_id)
+        ch = chapters.get(sc.chapter_id)
         row["chapter_name"] = ch.name if ch else None
         data.append(row)
     return {"data": data}

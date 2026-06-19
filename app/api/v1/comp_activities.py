@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from sqlalchemy import case, func
 from sqlmodel import select
@@ -1325,7 +1326,15 @@ async def submit_comp_answer(
         raise HTTPException(status_code=400, detail="Session already completed")
 
     activity = await session.get(CompChapterActivity, payload.activity_id)
-    if not activity or (activity.comp_chapter_id != play_session.comp_chapter_id and activity.sub_chapter_id != play_session.sub_chapter_id):
+
+    def _in_scope(act: CompChapterActivity, ps: CompActivityPlaySession) -> bool:
+        if ps.comp_chapter_id is not None:
+            return act.comp_chapter_id == ps.comp_chapter_id
+        if ps.sub_chapter_id is not None:
+            return act.sub_chapter_id == ps.sub_chapter_id
+        return False
+
+    if not activity or not _in_scope(activity, play_session):
         raise HTTPException(status_code=404, detail="Activity not found for this session")
     # H-1: group-scoped session must not accept activities from a different group
     if play_session.activity_group_id and activity.activity_group_id != play_session.activity_group_id:
@@ -1376,7 +1385,11 @@ async def submit_comp_answer(
         play_session.correct_count += 1
     play_session.score += score
     session.add(play_session)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail="Answer already submitted")
     await session.refresh(play_session)
 
     _answered_count = await session.exec(
@@ -1515,6 +1528,7 @@ async def submit_comp_answer(
         "correct_option_text": (
             activity_options[activity_correct_option_index - 1]
             if activity_options and activity_correct_option_index
+            and 1 <= activity_correct_option_index <= len(activity_options)
             else None
         ),
         "answer_description": activity_answer_description,
@@ -1563,6 +1577,7 @@ async def get_comp_session_report(
                 "correct_option_text": (
                     activity.options[activity.correct_option_index - 1]
                     if activity.options and activity.correct_option_index
+                    and 1 <= activity.correct_option_index <= len(activity.options)
                     else None
                 ),
                 "answer_description": activity.answer_description,

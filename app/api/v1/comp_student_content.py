@@ -9,7 +9,7 @@ from app.models.comp_student_content import (
     CompStudentTextbook, CompStudentNote, CompStudentVideo, CompPreviousYearPaper,
 )
 from app.models import ActivityGenerationJob
-
+from app.models.competitive_hierarchy import CompChapter, SubChapter
 from app.services.database import get_session
 from app.utils.files import upload_to_do, delete_from_do, delete_prefix_from_do
 
@@ -34,6 +34,15 @@ def _resolve_fk(comp_chapter_id: Optional[int], sub_chapter_id: Optional[int]):
     return comp_chapter_id, sub_chapter_id
 
 
+async def _validate_chapter_fk(comp_chapter_id: Optional[int], sub_chapter_id: Optional[int], session: AsyncSession):
+    if comp_chapter_id is not None:
+        if not await session.get(CompChapter, comp_chapter_id):
+            raise HTTPException(status_code=404, detail="Chapter not found")
+    if sub_chapter_id is not None:
+        if not await session.get(SubChapter, sub_chapter_id):
+            raise HTTPException(status_code=404, detail="Sub-chapter not found")
+
+
 # ============================================================
 # Student Textbook Endpoints
 # ============================================================
@@ -51,6 +60,7 @@ async def upload_comp_student_textbook(
 ):
     try:
         comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
+        await _validate_chapter_fk(comp_chapter_id, sub_chapter_id, session)
         folder_id = comp_chapter_id or sub_chapter_id
         do_path = f"comp/chapters/{folder_id}/student-content/textbooks"
         file_url = upload_to_do(file, do_path)
@@ -262,6 +272,7 @@ async def upload_comp_student_note(
             raise HTTPException(status_code=400, detail="Only .docx and .xlsx files are supported")
 
         comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
+        await _validate_chapter_fk(comp_chapter_id, sub_chapter_id, session)
         folder_id = comp_chapter_id or sub_chapter_id
         do_path = f"comp/chapters/{folder_id}/student-content/notes"
         file_url = upload_to_do(file, do_path)
@@ -555,6 +566,7 @@ async def upload_comp_student_video(
 ):
     try:
         comp_chapter_id, sub_chapter_id = _resolve_fk(comp_chapter_id, sub_chapter_id)
+        await _validate_chapter_fk(comp_chapter_id, sub_chapter_id, session)
         folder_id = comp_chapter_id or sub_chapter_id
         do_path = f"comp/chapters/{folder_id}/student-content/videos"
         file_url = upload_to_do(file, do_path)
