@@ -113,6 +113,19 @@ async def get_session_history(
     checkpointer = _get_checkpointer(request)
     config = {"configurable": {"thread_id": session.thread_id}}
 
+    def _extract_content(content) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+                elif isinstance(part, str):
+                    parts.append(part)
+            return "".join(parts)
+        return ""
+
     messages: list[MessageOut] = []
     try:
         checkpoint = await checkpointer.aget(config)
@@ -120,11 +133,12 @@ async def get_session_history(
             raw_messages = checkpoint.get("channel_values", {}).get("messages", [])
             for msg in raw_messages:
                 if isinstance(msg, HumanMessage):
-                    content = msg.content if isinstance(msg.content, str) else ""
+                    content = _extract_content(msg.content)
                     messages.append(MessageOut(role="human", content=content))
                 elif isinstance(msg, AIMessage):
-                    content = msg.content if isinstance(msg.content, str) else ""
-                    messages.append(MessageOut(role="ai", content=content))
+                    content = _extract_content(msg.content)
+                    if content:  # skip tool-call-only messages with no text
+                        messages.append(MessageOut(role="ai", content=content))
     except Exception as e:
         logger.warning(f"Could not load checkpoint for session {session_id}: {e}")
 

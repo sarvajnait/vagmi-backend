@@ -10,6 +10,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.services.database import engine
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
+
+def _is_db_connection_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(k in msg for k in ("connection", "closed", "timeout", "broken pipe", "reset"))
+
+
+class ResilientPostgresSaver(AsyncPostgresSaver):
+    """AsyncPostgresSaver with per-operation retry for transient connection drops."""
+
+    _MAX_RETRIES = 2
+
+    async def _retry(self, coro_func, *args, **kwargs):
+        for attempt in range(self._MAX_RETRIES + 1):
+            try:
+                return await coro_func(*args, **kwargs)
+            except Exception as exc:
+                if attempt < self._MAX_RETRIES and _is_db_connection_error(exc):
+                    logger.warning(f"checkpointer retry {attempt + 1}: {exc}")
+                    continue
+                raise
+
+    async def setup(self):
+        await self._retry(super().setup)
+
+    async def aget_tuple(self, config):
+        return await self._retry(super().aget_tuple, config)
+
+    async def aput(self, config, checkpoint, metadata, new_versions):
+        return await self._retry(super().aput, config, checkpoint, metadata, new_versions)
+
+    async def aput_writes(self, config, writes, task_id, *args, **kwargs):
+        return await self._retry(super().aput_writes, config, writes, task_id, *args, **kwargs)
+
 # Load environment variables
 load_dotenv()
 
@@ -116,14 +149,13 @@ async def lifespan(app: FastAPI):
     await _cleanup_stale_jobs()
 
     pg_url = settings.POSTGRES_URL.replace("postgresql+psycopg://", "postgresql://")
-    checkpointer = AsyncPostgresSaver.from_conn_string(pg_url)
-    await checkpointer.setup()
-    app.state.comp_checkpointer = checkpointer
-    logger.info("LangGraph Postgres checkpointer initialized")
+    async with ResilientPostgresSaver.from_conn_string(pg_url) as checkpointer:
+        await checkpointer.setup()
+        app.state.comp_checkpointer = checkpointer
+        logger.info("LangGraph Postgres checkpointer initialized")
 
-    yield
+        yield
 
-    await checkpointer.aclose()
     await engine.dispose()
     logger.info("Shutting down application")
 
