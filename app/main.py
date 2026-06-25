@@ -8,6 +8,7 @@ from app.models import *
 from app.schemas import *
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.database import engine
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 # Load environment variables
 load_dotenv()
@@ -113,7 +114,16 @@ async def _cleanup_stale_jobs():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _cleanup_stale_jobs()
+
+    pg_url = settings.POSTGRES_URL.replace("postgresql+psycopg://", "postgresql://")
+    checkpointer = AsyncPostgresSaver.from_conn_string(pg_url)
+    await checkpointer.setup()
+    app.state.comp_checkpointer = checkpointer
+    logger.info("LangGraph Postgres checkpointer initialized")
+
     yield
+
+    await checkpointer.aclose()
     await engine.dispose()
     logger.info("Shutting down application")
 

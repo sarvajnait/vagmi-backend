@@ -41,6 +41,7 @@ class CompEducationPlatform:
         filters: Dict[str, str],
         names: Optional[Dict[str, str]] = None,
         additional_notes_content: str = "",
+        checkpointer=None,
     ):
         names = names or {}
 
@@ -134,7 +135,7 @@ Start by choosing the right query rewrite, then retrieve and teach.
             model=comp_llm,
             tools=[retrieve_textbook],
             system_prompt=system_prompt,
-            checkpointer=comp_memory_checkpointer,
+            checkpointer=checkpointer or comp_memory_checkpointer,
         )
 
         return agent
