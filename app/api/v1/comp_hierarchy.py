@@ -8,6 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.competitive_hierarchy import (
     ExamCategory, ExamCategoryCreate, Exam, ExamCreate, CompExamMedium, CompExamMediumCreate, Level, LevelCreate, CompSubject, CompSubjectCreate, CompChapter, CompChapterCreate, CompChapterUpdate, SubChapter, SubChapterCreate, SubChapterUpdate,
+    CompChapterFAQ, CompChapterFAQCreate,
 )
 from app.services.database import get_session
 
@@ -511,3 +512,61 @@ async def delete_sub_chapter(id: int, session: AsyncSession = Depends(get_sessio
     await session.delete(obj)
     await session.commit()
     return {"message": "Sub-chapter deleted"}
+
+
+# ============================================================
+# CompChapter FAQs
+# ============================================================
+
+@router.get("/faqs")
+async def get_faqs(comp_chapter_id: int, session: AsyncSession = Depends(get_session)):
+    result = await session.exec(
+        select(CompChapterFAQ)
+        .where(CompChapterFAQ.comp_chapter_id == comp_chapter_id)
+        .order_by(*sort_ordering(CompChapterFAQ))
+    )
+    return {"data": [r.dict() for r in result.all()]}
+
+
+@router.post("/faqs")
+async def create_faq(payload: CompChapterFAQCreate, session: AsyncSession = Depends(get_session)):
+    chapter = await session.get(CompChapter, payload.comp_chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Comp chapter not found")
+    if payload.sort_order is None:
+        _r = await session.exec(
+            select(func.max(CompChapterFAQ.sort_order))
+            .where(CompChapterFAQ.comp_chapter_id == payload.comp_chapter_id)
+        )
+        max_order = _r.first()
+        if isinstance(max_order, tuple):
+            max_order = max_order[0]
+        payload = payload.copy(update={"sort_order": (max_order or 0) + 1})
+    obj = CompChapterFAQ(**payload.dict())
+    session.add(obj)
+    await session.commit()
+    await session.refresh(obj)
+    return {"message": "FAQ created", "data": obj.dict()}
+
+
+@router.put("/faqs/{id}")
+async def update_faq(id: int, payload: CompChapterFAQCreate, session: AsyncSession = Depends(get_session)):
+    obj = await session.get(CompChapterFAQ, id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="FAQ not found")
+    for k, v in payload.dict(exclude_unset=True).items():
+        setattr(obj, k, v)
+    session.add(obj)
+    await session.commit()
+    await session.refresh(obj)
+    return {"message": "FAQ updated", "data": obj.dict()}
+
+
+@router.delete("/faqs/{id}")
+async def delete_faq(id: int, session: AsyncSession = Depends(get_session)):
+    obj = await session.get(CompChapterFAQ, id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="FAQ not found")
+    await session.delete(obj)
+    await session.commit()
+    return {"message": "FAQ deleted"}

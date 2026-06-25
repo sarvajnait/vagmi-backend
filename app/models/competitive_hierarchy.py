@@ -161,6 +161,7 @@ class CompChapter(CompChapterBase, BaseModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     subject: CompSubject = Relationship(back_populates="chapters")
     sub_chapters: List["SubChapter"] = Relationship(back_populates="chapter", cascade_delete=True)
+    faqs: List["CompChapterFAQ"] = Relationship(back_populates="comp_chapter", cascade_delete=True)
 
 
 class CompChapterCreate(CompChapterBase):
@@ -216,3 +217,25 @@ class SubChapterUpdate(SQLModel):
 class SubChapterRead(SubChapterBase):
     id: int
     chapter_name: Optional[str] = None
+
+
+# --------------------
+# CompChapterFAQ
+# --------------------
+class CompChapterFAQBase(SQLModel):
+    question: str
+    comp_chapter_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("comp_chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
+    sort_order: Optional[int] = Field(default=None)
+
+
+class CompChapterFAQ(CompChapterFAQBase, BaseModel, table=True):
+    __tablename__ = "comp_chapter_faqs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    comp_chapter: CompChapter = Relationship(back_populates="faqs")
+
+
+class CompChapterFAQCreate(CompChapterFAQBase):
+    pass
